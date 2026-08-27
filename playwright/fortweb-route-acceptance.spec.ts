@@ -1,9 +1,36 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type BrowserContext, type Page } from '@playwright/test';
+
+const applicationOrigin = new URL(process.env['FORTWEB_BASE_URL'] ?? '').origin;
+const rejectedExternalRequests = new WeakMap<BrowserContext, string[]>();
+
+test.beforeEach(async ({ context }) => {
+    const rejected: string[] = [];
+    rejectedExternalRequests.set(context, rejected);
+    await context.route('**/*', async (route) => {
+        const url = new URL(route.request().url());
+        if ((url.protocol === 'http:' || url.protocol === 'https:') && url.origin !== applicationOrigin) {
+            rejected.push(url.href);
+            await route.abort('blockedbyclient');
+            return;
+        }
+        await route.continue();
+    });
+});
+
+test.afterEach(async ({ context }) => {
+    const rejected = rejectedExternalRequests.get(context) ?? [];
+    try {
+        expect(rejected).toEqual([]);
+        console.log('application-network-guard external=0');
+    } finally {
+        await context.unroute('**/*');
+        rejectedExternalRequests.delete(context);
+    }
+});
 
 function isKnownRuntimeNoise(text: string): boolean {
     return (
         text.includes('SyntaxWarning: invalid escape sequence') ||
-        text.includes('/lib/python3.13/site-packages/') ||
         text.includes("b'(?P<kind2>") ||
         text.includes('MapDom is a subclass of IceMapDom') ||
         text.includes('RawDom is subclass of MapDom')
@@ -49,7 +76,7 @@ test.describe('FortWeb route acceptance', () => {
         const pageErrors = collectUnexpectedPageErrors(page);
         const consoleErrors = collectUnexpectedConsoleErrors(page);
 
-        await page.goto('/fortweb/app/#/_fixtures');
+        await page.goto('/fortweb/app/index.html#/_fixtures');
 
         await expect(page.getByRole('heading', { name: 'Fixture Routes' })).toBeVisible();
         await expect(page.getByRole('link', { name: 'vaults/populated' })).toBeVisible();
@@ -62,7 +89,7 @@ test.describe('FortWeb route acceptance', () => {
         const pageErrors = collectUnexpectedPageErrors(page);
         const consoleErrors = collectUnexpectedConsoleErrors(page);
 
-        await page.goto('/fortweb/app/#/_fixtures/identifiers/empty');
+        await page.goto('/fortweb/app/index.html#/_fixtures/identifiers/empty');
 
         await expect(page.getByRole('heading', { name: 'Local Identifiers', exact: true })).toBeVisible();
         await expect(page.getByRole('heading', { name: 'No Local Identifiers Yet' })).toBeVisible();
@@ -74,7 +101,7 @@ test.describe('FortWeb route acceptance', () => {
         const pageErrors = collectUnexpectedPageErrors(page);
         const consoleErrors = collectUnexpectedConsoleErrors(page);
 
-        await page.goto('/fortweb/app/#/_fixtures/remotes/empty');
+        await page.goto('/fortweb/app/index.html#/_fixtures/remotes/empty');
 
         await expect(page.getByRole('heading', { name: 'Remote Identifiers', exact: true })).toBeVisible();
         await expect(page.getByRole('heading', { name: 'No Remote Identifiers Yet' })).toBeVisible();
@@ -86,7 +113,7 @@ test.describe('FortWeb route acceptance', () => {
         const pageErrors = collectUnexpectedPageErrors(page);
         const consoleErrors = collectUnexpectedConsoleErrors(page);
 
-        await page.goto('/fortweb/app/#/_fixtures/settings');
+        await page.goto('/fortweb/app/index.html#/_fixtures/settings');
 
         await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
 
@@ -97,7 +124,7 @@ test.describe('FortWeb route acceptance', () => {
         const pageErrors = collectUnexpectedPageErrors(page);
         const consoleErrors = collectUnexpectedConsoleErrors(page);
 
-        await page.goto('/fortweb/app/#/_fixtures/witnesses/disconnected');
+        await page.goto('/fortweb/app/index.html#/_fixtures/witnesses/disconnected');
 
         await expect(page.getByRole('heading', { name: 'Witnesses', level: 1 })).toBeVisible();
         await expect(page.locator('dl').getByText('Disconnected')).toBeVisible();
@@ -109,7 +136,7 @@ test.describe('FortWeb route acceptance', () => {
         const pageErrors = collectUnexpectedPageErrors(page);
         const consoleErrors = collectUnexpectedConsoleErrors(page);
 
-        await page.goto('/fortweb/app/#/_fixtures/watchers/placeholder');
+        await page.goto('/fortweb/app/index.html#/_fixtures/watchers/placeholder');
 
         await expect(page.getByRole('heading', { name: 'Watchers', level: 1 })).toBeVisible();
 
@@ -120,7 +147,7 @@ test.describe('FortWeb route acceptance', () => {
         const pageErrors = collectUnexpectedPageErrors(page);
         const consoleErrors = collectUnexpectedConsoleErrors(page);
 
-        await page.goto('/fortweb/app/#/this-route-should-not-exist');
+        await page.goto('/fortweb/app/index.html#/this-route-should-not-exist');
 
         await expect(page.getByRole('heading', { name: 'Route Not Found' })).toBeVisible();
 

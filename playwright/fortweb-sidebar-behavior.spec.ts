@@ -1,9 +1,36 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type BrowserContext, type Page } from '@playwright/test';
+
+const applicationOrigin = new URL(process.env['FORTWEB_BASE_URL'] ?? '').origin;
+const rejectedExternalRequests = new WeakMap<BrowserContext, string[]>();
+
+test.beforeEach(async ({ context }) => {
+    const rejected: string[] = [];
+    rejectedExternalRequests.set(context, rejected);
+    await context.route('**/*', async (route) => {
+        const url = new URL(route.request().url());
+        if ((url.protocol === 'http:' || url.protocol === 'https:') && url.origin !== applicationOrigin) {
+            rejected.push(url.href);
+            await route.abort('blockedbyclient');
+            return;
+        }
+        await route.continue();
+    });
+});
+
+test.afterEach(async ({ context }) => {
+    const rejected = rejectedExternalRequests.get(context) ?? [];
+    try {
+        expect(rejected).toEqual([]);
+        console.log('application-network-guard external=0');
+    } finally {
+        await context.unroute('**/*');
+        rejectedExternalRequests.delete(context);
+    }
+});
 
 function isKnownRuntimeNoise(text: string): boolean {
     return (
         text.includes('SyntaxWarning: invalid escape sequence') ||
-        text.includes('/lib/python3.13/site-packages/') ||
         text.includes("b'(?P<kind2>") ||
         text.includes('MapDom is a subclass of IceMapDom') ||
         text.includes('RawDom is subclass of MapDom')
@@ -49,7 +76,7 @@ test.describe('FortWeb sidebar behavior', () => {
         const pageErrors = collectUnexpectedPageErrors(page);
         const consoleErrors = collectUnexpectedConsoleErrors(page);
 
-        await page.goto('/fortweb/app/#/_fixtures/identifiers/populated');
+        await page.goto('/fortweb/app/index.html#/_fixtures/identifiers/populated');
 
         // Assert page renders expected identifiers content
         await expect(page.getByText('Local Identifiers')).toBeVisible();
@@ -80,7 +107,7 @@ test.describe('FortWeb sidebar behavior', () => {
         const pageErrors = collectUnexpectedPageErrors(page);
         const consoleErrors = collectUnexpectedConsoleErrors(page);
 
-        await page.goto('/fortweb/app/#/_fixtures/witnesses/account');
+        await page.goto('/fortweb/app/index.html#/_fixtures/witnesses/account');
 
         // Assert witnesses page renders
         await expect(page.getByText('Hosted Witnesses')).toBeVisible();
@@ -112,7 +139,7 @@ test.describe('FortWeb sidebar behavior', () => {
         const pageErrors = collectUnexpectedPageErrors(page);
         const consoleErrors = collectUnexpectedConsoleErrors(page);
 
-        await page.goto('/fortweb/app/#/_fixtures/watchers/populated');
+        await page.goto('/fortweb/app/index.html#/_fixtures/watchers/populated');
 
         // Assert watchers page renders
         await expect(page.getByRole('heading', { name: 'Watchers', exact: true })).toBeVisible();

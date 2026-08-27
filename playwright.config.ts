@@ -1,5 +1,8 @@
 import { defineConfig, devices } from '@playwright/test';
 
+const applicationBaseURL = 'http://127.0.0.1:4173';
+process.env['FORTWEB_BASE_URL'] ??= applicationBaseURL;
+
 export default defineConfig({
     testDir: './playwright',
     fullyParallel: false,
@@ -13,7 +16,7 @@ export default defineConfig({
         timeout: 60_000,
     },
     use: {
-        baseURL: 'http://127.0.0.1:4173',
+        baseURL: applicationBaseURL,
         trace: 'on-first-retry',
     },
     projects: [
