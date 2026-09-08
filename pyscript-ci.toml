@@ -2,7 +2,7 @@ interpreter = "./vendor/pyodide/314.0.5/pyodide.mjs"
 
 [fort_runtime_packages]
 manifest = "./runtime-closure.json"
-sha256 = "268e299a56a92a6cee6ea1a2977837004dbbba34a5f56d5c4b0e9a0ace2b2ccc"
+sha256 = "__RUNTIME_CLOSURE_SHA256__"
 
 [files]
 "./app/runtime/runtime_packages.py" = "./runtime_packages.py"

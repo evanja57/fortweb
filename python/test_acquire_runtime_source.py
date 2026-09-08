@@ -28,7 +28,7 @@ def _archive(path: Path, member: tarfile.TarInfo, body: bytes = b"") -> None:
 
 class RuntimeSourceAcquisitionTest(unittest.TestCase):
     def test_safe_extract_accepts_regular_files(self):
-        with tempfile.TemporaryDirectory(dir="/private/tmp") as directory:
+        with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             archive = root / "source.tar.gz"
             _archive(archive, tarfile.TarInfo("runtime/pyodide.mjs"), b"runtime")
@@ -37,7 +37,7 @@ class RuntimeSourceAcquisitionTest(unittest.TestCase):
             self.assertEqual((output / "runtime" / "pyodide.mjs").read_bytes(), b"runtime")
 
     def test_safe_extract_rejects_traversal_and_links(self):
-        with tempfile.TemporaryDirectory(dir="/private/tmp") as directory:
+        with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             for index, member in enumerate((
                 tarfile.TarInfo("../escape"),

@@ -30,7 +30,6 @@ EXPECTED_CORE_FILES = {
     "python_stdlib.zip",
     "pyodide-lock.json",
 }
-EXPECTED_SOURCE_MANIFEST_SHA256 = "697d54f0028a526357f017010a6a5104dfb7e53c99a7c3769437dd9af64ec93c"
 EXPECTED_MANIFEST_KEYS = {
     "schema",
     "source_manifest_sha256",
@@ -198,8 +197,9 @@ def _validate_manifest(manifest, manifest_url, manifest_sha256, package_base):
         or manifest.get("schema") != 1
     ):
         raise RuntimeError("unsupported package manifest schema")
-    if manifest.get("source_manifest_sha256") != EXPECTED_SOURCE_MANIFEST_SHA256:
-        raise RuntimeError("package manifest source identity mismatch")
+    source_digest = manifest.get("source_manifest_sha256")
+    if not isinstance(source_digest, str) or re.fullmatch(r"[0-9a-f]{64}", source_digest) is None:
+        raise RuntimeError("package manifest source identity must be a lowercase SHA-256")
     runtime = manifest.get("runtime")
     if (
         not isinstance(runtime, dict)

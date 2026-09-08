@@ -144,7 +144,9 @@ def proxy_url(url: str):
         return url
 
     parsed = urlparse(url)
-    if not parsed.scheme or not parsed.netloc:
+    if (parsed.scheme not in {"http", "https"}
+            or parsed.hostname not in {"127.0.0.1", "localhost", "::1"}
+            or parsed.port is None):
         return url
 
     origin = _CONFIG["origin"]()

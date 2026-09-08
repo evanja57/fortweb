@@ -382,8 +382,6 @@ test("Runtime boots the production worker from only the canonical runtime tree",
             "  _update(\\*pa, \\*\\*kwa): update attributes using dict like update syntax",
             expect.stringMatching(/^\/lib\/python3\.14\/site-packages\/hio\/help\/doming\.py:634: SyntaxWarning:/),
             "  _update(\\*pa, \\*\\*kwa): update attributes using dict like update syntax",
-            expect.stringMatching(/^\/lib\/python3\.14\/site-packages\/keri\/core\/parsing\.py:651: SyntaxWarning:/),
-            "  break",
         ]);
         expect(pageErrors).toEqual([]);
 

@@ -55,6 +55,7 @@ def running_server(mode: str):
             mode=mode,
             inventory_path=inventory_path,
             wheelhouse_root=WHEELHOUSE_ROOT,
+            manifest_sha256=os.environ.get("FORTWEB_RUNTIME_SOURCE_MANIFEST_SHA256", ""),
         )
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
@@ -95,7 +96,7 @@ class RuntimeBrowserServerTest(unittest.TestCase):
         with running_server("isolated") as port:
             status, body, headers = request(port, "/fortweb/app/index.html")
             self.assertEqual(status, 200)
-            self.assertIn(b"Fortweb Wallet Shell", body)
+            self.assertIn(b"<title>FortWeb</title>", body)
             self.assertEqual(headers["cache-control"], "no-store")
             self.assertEqual(request(port, "/fortweb/runtime-closure.json")[0], 200)
             for blocked in (

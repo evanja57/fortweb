@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "build:runtime": "node tools/build-runtime.mjs",
+    "build:runtime-source": "python3 scripts/build_runtime_source.py",
+    "package:runtime": "node tools/package-runtime.mjs",
     "verify:runtime-package": "node tools/verify-runtime-package.mjs",
     "test:runtime-safe-output": "node --test tools/runtime-safe-output.test.mjs",
     "test:runtime-closure": "node --test tools/runtime-closure.test.mjs",

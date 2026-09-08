@@ -427,27 +427,27 @@ def require_text(value, *, field: str):
     return text
 
 
-def require_blind_oobi_url(value):
+def require_oobi_url(value):
     url = require_text(value, field="OOBI URL")
     parsed = urlparse(url)
 
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise RuntimeFault(
             "VALIDATION",
-            "Blind OOBI URL must be an absolute http(s) URL.",
-        )
-
-    if parsed.path != "/oobi":
-        raise RuntimeFault(
-            "VALIDATION",
-            "Blind OOBI URL must use the blind /oobi route in this slice.",
+            "OOBI URL must be an absolute http(s) URL.",
         )
 
     if parsed.fragment:
         raise RuntimeFault(
             "VALIDATION",
-            "Blind OOBI URL must not include a fragment.",
+            "OOBI URL must not include a fragment.",
         )
+
+    oobiing = load_modules()["oobiing"]
+    if (parsed.path != "/oobi"
+            and oobiing.OOBI_RE.fullmatch(parsed.path) is None
+            and oobiing.WOOBI_RE.fullmatch(parsed.path) is None):
+        raise RuntimeFault("VALIDATION", "URL must use a supported identifier OOBI route.")
 
     return url
 
@@ -491,7 +491,7 @@ def _list_identifier_records(hby):
     records = []
     for pre in hby.prefixes:
         hab = hby.habByPre(pre)
-        if hab is None:
+        if hab is None or hby.habByName(hab.name) is not hab:
             continue
         records.append(_identifier_record(hab))
 
@@ -501,7 +501,7 @@ def _list_identifier_records(hby):
 
 def _get_identifier_record(hby, aid: str):
     hab = hby.habByPre(aid)
-    if hab is None:
+    if hab is None or hby.habByName(hab.name) is not hab:
         raise RuntimeFault("NOT_FOUND", f"Identifier '{aid}' was not found.")
     return _identifier_record(hab)
 
@@ -583,7 +583,7 @@ def _remote_keystate_updated_at(hby, oobi: str):
 
 def _remote_record(hby, contact):
     aid = contact["id"]
-    kever = hby.kevers.get(aid)
+    kever = hby.kevers[aid] if aid in hby.kevers else None
     alias = contact.get("alias") or aid[:12]
     oobi = contact.get("oobi", "")
     roles = _remote_roles(hby, aid, oobi)
@@ -684,7 +684,7 @@ def _require_remote_contact(
         if missing_oobi_code == "CONFLICT":
             raise RuntimeFault(
                 "CONFLICT",
-                "Remote identifier metadata can only be edited after blind OOBI connect in this slice.",
+                "Connect the remote identifier by OOBI before editing its metadata.",
             )
         raise RuntimeFault(
             "NOT_FOUND",
@@ -697,7 +697,7 @@ def _require_remote_contact(
 def _remote_detail_record(hby, organizer, aid: str):
     contact = _require_remote_contact(hby, organizer, aid, require_oobi=True)
     record = _remote_record(hby, contact)
-    kever = hby.kevers.get(aid)
+    kever = hby.kevers[aid] if aid in hby.kevers else None
     record.update(
         {
             "lastEventDigest": kever.serder.said if kever is not None else "",
@@ -935,13 +935,13 @@ async def dispatch(method: str, params: dict):
         return {"remote": remote}
 
     if method == "remotes.resolveOobi":
-        url = require_blind_oobi_url(params.get("url"))
+        url = require_oobi_url(params.get("url"))
         alias = str(params.get("alias") or "").strip()
         existing_remote = find_remote_contact_by_oobi(hby, organizer, url)
         if existing_remote is not None:
             raise RuntimeFault(
                 "CONFLICT",
-                "Blind OOBI is already connected. Use remote edit for metadata changes.",
+                "OOBI is already connected. Use remote edit for metadata changes.",
             )
 
         remote_contacts_before = remote_contacts_by_aid(hby, organizer)
@@ -966,12 +966,12 @@ async def dispatch(method: str, params: dict):
             if _is_local_identifier(hby, resolved_aid):
                 raise RuntimeFault(
                     "CONFLICT",
-                    "Blind OOBI connect cannot add a local identifier to remotes.",
+                    "OOBI connect cannot add a local identifier to remotes.",
                 )
             if resolved_aid in remote_contacts_before:
                 raise RuntimeFault(
                     "CONFLICT",
-                    "Blind OOBI is already connected to a stored remote identifier.",
+                    "OOBI is already connected to a stored remote identifier.",
                 )
 
             update = {"oobi": url}

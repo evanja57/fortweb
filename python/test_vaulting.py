@@ -6,6 +6,7 @@ import asyncio
 import importlib.util
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 
 REPO = Path(__file__).resolve().parent.parent
@@ -108,6 +109,30 @@ class VaultlessSettingsTest(unittest.TestCase):
             },
         )
         self.assertEqual(self.calls, [])
+
+
+class IdentifierNamespaceTest(unittest.TestCase):
+    def test_internal_identifiers_stay_out_of_list_and_detail_after_reopen(self):
+        vaulting = _load_module()
+        # Reopened habitats do not retain their namespace on the Hab object.
+        public = SimpleNamespace(name="kf-onboarding-personal", pre="public")
+        internal = SimpleNamespace(name="kf-onboarding-session", pre="internal")
+        habitats = {hab.pre: hab for hab in (public, internal)}
+        hby = SimpleNamespace(
+            prefixes=list(habitats),
+            habByPre=habitats.get,
+            habByName=lambda name: public if name == public.name else None,
+        )
+        vaulting._identifier_record = lambda hab: {"aid": hab.pre, "alias": hab.name}
+
+        self.assertEqual(vaulting._list_identifier_records(hby), [
+            {"aid": "public", "alias": "kf-onboarding-personal"},
+        ])
+        self.assertEqual(vaulting._get_identifier_record(hby, "public")["aid"], "public")
+        with self.assertRaises(vaulting.RuntimeFault) as raised:
+            vaulting._get_identifier_record(hby, "internal")
+        self.assertEqual(raised.exception.code, "NOT_FOUND")
+        self.assertIs(hby.habByPre("internal"), internal)
 
 
 if __name__ == "__main__":

@@ -9,7 +9,9 @@ import json
 import os
 import re
 import stat
+import subprocess
 import sys
+import tempfile
 import tomllib
 import zipfile
 from email.parser import Parser
@@ -22,8 +24,6 @@ from packaging.version import Version
 
 
 REPO = Path(__file__).resolve().parent.parent
-EXPECTED_SOURCE_MANIFEST_SHA256 = "697d54f0028a526357f017010a6a5104dfb7e53c99a7c3769437dd9af64ec93c"
-EXPECTED_CLOSURE_SHA256 = "268e299a56a92a6cee6ea1a2977837004dbbba34a5f56d5c4b0e9a0ace2b2ccc"
 EXPECTED_RUNTIME = {
     "pyodide": "314.0.5",
     "python": "3.14.2",
@@ -41,20 +41,6 @@ DEPENDENCY_EXCLUSIONS = [
     {"owner": "hio", "requirement": "lmdb>=1.7.5"},
     {"owner": "keri", "requirement": "lmdb==2.1.1"},
 ]
-PINNED_COMPILED = {
-    "app/runtime/origin-contract.js": "f16cb33e88f1a4300a61d298649572f281e9a10eead4738d2a61a71a42d929a9",
-    "app/runtime/logger.js": "4935990daac1e0733d7d7c65a7c09181fbf44a30948acc34dbd3b7c3464e614f",
-}
-PINNED_SOURCE = {
-    "app/assets/icons/copy.svg": "b6afc48ffb603119477f83e3484c95f7b447fc1ba7b1ac3a6580621f2be0e174",
-    "app/runtime/origin-contract.ts": "1c725f203b976a6e0f5a539f7ac5ea07ee9ac90f89ce7ac94553f25aa30431c0",
-    "app/runtime/wallet-worker.py": "bba295f27c62b8513e65d85eb954053ec5cab38d905cbb2d1f6c294d37d45f09",
-    "app/runtime/vaulting.py": "6279692f99801e77122db47a199411b7066dd794702bd514d8fe79673e484ea7",
-    "app/runtime/runtime_packages.py": "48358ad5f233eaa96d4e0558b6fd1be45937a85cf9e2d4638cfc73adcbb38a5b",
-    "app/runtime/transporting.py": "066de0ac25b08f0d2226466bfa413a155b2c364661d91fed06e72cea6452b892",
-    "app/runtime/onboarding.py": "b36959cd0f5907bba7b1671da4e41b442d7e24e440e3195ea884f1f3ae4fa6ce",
-    "app/runtime/logger.ts": "63798938f76388dc9eac446ba6eabe80ac68096974b7489f3d99c87575653f21",
-}
 FORBIDDEN_ACTIVE_TOKENS = (
     "0.29.3",
     "cp313-cp313",
@@ -113,7 +99,7 @@ def validate_runtime_config(raw: bytes, root: Path) -> dict:
     package_config = config["fort_runtime_packages"]
     if package_config != {
         "manifest": "./runtime-closure.json",
-        "sha256": EXPECTED_CLOSURE_SHA256,
+        "sha256": sha256_bytes(read_regular(root / "runtime-closure.json", root)),
     }:
         raise RuntimeError("packaged runtime package declaration is not exact")
     files_config = config["files"]
@@ -210,14 +196,16 @@ def aggregate(rows: list[dict[str, object]]) -> str:
     return digest.hexdigest()
 
 
-def source_manifest(source_manifest_path: Path) -> tuple[dict, Path]:
+def source_manifest(source_manifest_path: Path, expected_sha256: str) -> tuple[dict, Path]:
+    if not re.fullmatch(r"[0-9a-f]{64}", expected_sha256):
+        raise RuntimeError("an explicit source manifest SHA-256 is required")
     manifest_path = Path(os.path.abspath(source_manifest_path))
     try:
         manifest_path.relative_to(REPO)
     except ValueError as exc:
         raise RuntimeError("source manifest must remain inside the repository") from exc
     raw = read_regular(manifest_path, REPO)
-    if sha256_bytes(raw) != EXPECTED_SOURCE_MANIFEST_SHA256:
+    if sha256_bytes(raw) != expected_sha256:
         raise RuntimeError("source manifest bytes do not match the reviewed wheelhouse manifest")
     return json.loads(raw), manifest_path
 
@@ -234,7 +222,7 @@ def file_index(manifest: dict) -> dict[str, dict]:
     return result
 
 
-def project_closure(manifest: dict) -> tuple[dict, list[tuple[str, str]]]:
+def project_closure(manifest: dict, manifest_sha256: str) -> tuple[dict, list[tuple[str, str]]]:
     runtime = manifest.get("runtime")
     if not isinstance(runtime, dict) or any(runtime.get(key) != value for key, value in EXPECTED_RUNTIME.items()):
         raise RuntimeError("source runtime identity mismatch")
@@ -294,7 +282,7 @@ def project_closure(manifest: dict) -> tuple[dict, list[tuple[str, str]]]:
         })
     return {
         "schema": 1,
-        "source_manifest_sha256": EXPECTED_SOURCE_MANIFEST_SHA256,
+        "source_manifest_sha256": manifest_sha256,
         "runtime": {**EXPECTED_RUNTIME, "core_files": CORE_FILES},
         "files": files,
         "wheels": projected_wheels,
@@ -426,14 +414,45 @@ def validate_runtime_root(root: Path) -> Path:
     return resolved
 
 
-def verify_runtime(root: Path, source_manifest_path: Path) -> dict:
+def verify_compiled_outputs(root: Path) -> int:
+    """Compare all emitted JavaScript with a fresh compilation of current sources."""
+    package_root = REPO / "node_modules" / "typescript"
+    package = json.loads((package_root / "package.json").read_text())
+    lock = json.loads((REPO / "package-lock.json").read_text())
+    if package.get("version") != lock["packages"]["node_modules/typescript"]["version"]:
+        raise RuntimeError("installed TypeScript does not match package-lock.json; run npm ci")
+    node = os.environ.get("FORTWEB_NODE", "node")
+    with tempfile.TemporaryDirectory(prefix="fortweb-typescript-verify-") as temporary:
+        compiled = Path(temporary).resolve()
+        result = subprocess.run(
+            [node, str(package_root / "bin" / "tsc"), "--project", str(REPO / "tsconfig.build.json"),
+             "--outDir", str(compiled)],
+            cwd=REPO,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        if result.returncode:
+            raise RuntimeError(f"independent TypeScript compilation failed:\n{result.stdout}")
+        rows = inventory(compiled)
+        if not rows:
+            raise RuntimeError("independent TypeScript compilation emitted no files")
+        for row in rows:
+            relative = row["path"]
+            expected = read_regular(compiled / relative, compiled)
+            actual = read_regular(root / relative, root)
+            if actual != expected:
+                raise RuntimeError(f"compiled runtime file does not match current source: {relative}")
+        return len(rows)
+
+
+def verify_runtime(root: Path, source_manifest_path: Path, manifest_sha256: str | None = None) -> dict:
+    manifest_sha256 = manifest_sha256 or os.environ.get("FORTWEB_RUNTIME_SOURCE_MANIFEST_SHA256", "")
     root = validate_runtime_root(root)
     root_info = root.stat()
-    manifest, manifest_path = source_manifest(source_manifest_path)
-    closure, copies = project_closure(manifest)
+    manifest, manifest_path = source_manifest(source_manifest_path, manifest_sha256)
+    closure, copies = project_closure(manifest, manifest_sha256)
     closure_bytes = canonical_json(closure)
-    if sha256_bytes(closure_bytes) != EXPECTED_CLOSURE_SHA256:
-        raise RuntimeError("independently projected closure hash changed")
     actual_closure = read_regular(root / "runtime-closure.json", root)
     if actual_closure != closure_bytes:
         raise RuntimeError("runtime-closure.json is not the independent canonical projection")
@@ -451,24 +470,17 @@ def verify_runtime(root: Path, source_manifest_path: Path) -> dict:
         "app", "pyscript-ci.toml", "runtime-closure.json", "vendor", "wheels"
     }:
         raise RuntimeError("runtime root contains an unexpected top-level entry")
+    compiled_file_count = verify_compiled_outputs(root)
 
     for relative, source in source_copies.items():
         source_bytes = read_regular(source, REPO)
         output_bytes = read_regular(root.joinpath(*PurePosixPath(relative).parts), root)
+        if relative == "pyscript-ci.toml":
+            if source_bytes.count(b"__RUNTIME_CLOSURE_SHA256__") != 1:
+                raise RuntimeError("source runtime config must contain one digest placeholder")
+            source_bytes = source_bytes.replace(b"__RUNTIME_CLOSURE_SHA256__", sha256_bytes(closure_bytes).encode())
         if output_bytes != source_bytes:
             raise RuntimeError(f"copied runtime input changed: {relative}")
-    for relative, expected in PINNED_SOURCE.items():
-        source = REPO.joinpath(*PurePosixPath(relative).parts)
-        if sha256_bytes(read_regular(source, REPO)) != expected:
-            raise RuntimeError(f"pinned runtime source changed: {relative}")
-        if not relative.endswith(".ts"):
-            output = root.joinpath(*PurePosixPath(relative).parts)
-            if sha256_bytes(read_regular(output, root)) != expected:
-                raise RuntimeError(f"pinned runtime copied output changed: {relative}")
-    for relative, expected in PINNED_COMPILED.items():
-        if row_by_path.get(relative, {}).get("sha256") != expected:
-            raise RuntimeError(f"pinned compiled runtime file changed: {relative}")
-
     source_root = manifest_path.parent
     for source, target in copies:
         output = row_by_path[target]
@@ -507,11 +519,12 @@ def verify_runtime(root: Path, source_manifest_path: Path) -> dict:
         "root": str(root),
         "target_dev": root_info.st_dev,
         "target_ino": root_info.st_ino,
-        "closure_sha256": EXPECTED_CLOSURE_SHA256,
-        "source_manifest_sha256": EXPECTED_SOURCE_MANIFEST_SHA256,
+        "closure_sha256": sha256_bytes(closure_bytes),
+        "source_manifest_sha256": manifest_sha256,
         "files": rows,
         "aggregate_sha256": aggregate(rows),
         "file_count": len(rows),
+        "compiled_file_count": compiled_file_count,
         "wheel_count": len(closure["wheels"]),
         "dependency_edges": edges,
         "dependency_edge_count": len(edges),
@@ -541,9 +554,10 @@ def main() -> int:
     parser.add_argument("--compare-inventory", type=Path)
     parser.add_argument("--run-id", default="")
     parser.add_argument("--source-identity-sha256", default="")
+    parser.add_argument("--source-manifest-sha256", default=os.environ.get("FORTWEB_RUNTIME_SOURCE_MANIFEST_SHA256", ""))
     args = parser.parse_args()
 
-    verified = verify_runtime(args.runtime_dir, args.source_manifest)
+    verified = verify_runtime(args.runtime_dir, args.source_manifest, args.source_manifest_sha256)
     identity = {}
     if args.run_id:
         identity["run_id"] = args.run_id

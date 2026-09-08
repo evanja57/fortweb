@@ -15,6 +15,10 @@ on:
         description: SHA-256 digest of the runtime source archive
         required: true
         type: string
+      runtime_source_manifest_sha256:
+        description: SHA-256 digest of manifest.json inside the source archive
+        required: true
+        type: string
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -31,6 +35,7 @@ jobs:
       FORTWEB_RUNTIME_SOURCE_URL: ${{ inputs.runtime_source_url || vars.FORTWEB_RUNTIME_SOURCE_URL }}
       FORTWEB_RUNTIME_SOURCE_ARCHIVE_SHA256: ${{ inputs.runtime_source_archive_sha256 || vars.FORTWEB_RUNTIME_SOURCE_ARCHIVE_SHA256 }}
       FORTWEB_RUNTIME_SOURCE_MANIFEST: build/runtime-source/manifest.json
+      FORTWEB_RUNTIME_SOURCE_MANIFEST_SHA256: ${{ inputs.runtime_source_manifest_sha256 || vars.FORTWEB_RUNTIME_SOURCE_MANIFEST_SHA256 }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -49,17 +54,29 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Require reviewed runtime source
+        run: |
+          test -n "$FORTWEB_RUNTIME_SOURCE_URL" || { echo "Configure FORTWEB_RUNTIME_SOURCE_URL"; exit 1; }
+          test -n "$FORTWEB_RUNTIME_SOURCE_ARCHIVE_SHA256" || { echo "Configure FORTWEB_RUNTIME_SOURCE_ARCHIVE_SHA256"; exit 1; }
+          test -n "$FORTWEB_RUNTIME_SOURCE_MANIFEST_SHA256" || { echo "Configure FORTWEB_RUNTIME_SOURCE_MANIFEST_SHA256"; exit 1; }
+
       - name: Acquire reviewed runtime source
-        if: env.FORTWEB_RUNTIME_SOURCE_URL != '' && env.FORTWEB_RUNTIME_SOURCE_ARCHIVE_SHA256 != ''
         run: |
           python3 scripts/acquire_runtime_source.py \
             --url "$FORTWEB_RUNTIME_SOURCE_URL" \
             --sha256 "$FORTWEB_RUNTIME_SOURCE_ARCHIVE_SHA256" \
+            --manifest-sha256 "$FORTWEB_RUNTIME_SOURCE_MANIFEST_SHA256" \
             --output build/runtime-source
 
       - name: Install Playwright browsers
-        if: env.FORTWEB_RUNTIME_SOURCE_URL != '' && env.FORTWEB_RUNTIME_SOURCE_ARCHIVE_SHA256 != ''
         run: npx playwright install --with-deps chromium
+
+      - name: Install verified Python build tools
+        run: |
+          python3 -m pip install --disable-pip-version-check --no-index --no-deps \
+            build/runtime-source/wheelhouse/packaging-26.1-py3-none-any.whl \
+            build/runtime-source/wheelhouse/setuptools-83.0.0-py3-none-any.whl \
+            build/runtime-source/wheelhouse/wheel-0.47.0-py3-none-any.whl
 
       - name: Typecheck
         run: npm run typecheck
@@ -74,24 +91,22 @@ jobs:
             tools/verify-runtime-package.test.mjs
           python3 -m unittest \
             python/test_acquire_runtime_source.py \
+            python/test_build_runtime_source.py \
+            python/test_serve_local.py \
+            python/test_transporting.py \
             python/test_onboarding.py \
             python/test_vaulting.py
 
       - name: Build runtime
-        if: env.FORTWEB_RUNTIME_SOURCE_URL != '' && env.FORTWEB_RUNTIME_SOURCE_ARCHIVE_SHA256 != ''
         run: npm run build:runtime
 
       - name: Check runtime JS
-        if: env.FORTWEB_RUNTIME_SOURCE_URL != '' && env.FORTWEB_RUNTIME_SOURCE_ARCHIVE_SHA256 != ''
         run: npm run check:runtime-js
 
       - name: Verify runtime tree
-        if: env.FORTWEB_RUNTIME_SOURCE_URL != '' && env.FORTWEB_RUNTIME_SOURCE_ARCHIVE_SHA256 != ''
         run: |
           mkdir -p test-results
           git rev-parse HEAD > test-results/source-identity.txt
-          python3 -m pip install --disable-pip-version-check --no-deps \
-            build/runtime-source/wheelhouse/packaging-26.1-py3-none-any.whl
           python3 scripts/verify_runtime_tree.py \
             --runtime-dir dist/runtime \
             --source-manifest "$FORTWEB_RUNTIME_SOURCE_MANIFEST" \
@@ -103,12 +118,20 @@ jobs:
       - name: Test runtime JS check
         run: npm run test:runtime-js-check
 
+      - name: Package and verify runtime
+        env:
+          PACKAGE_REF: ${{ github.head_ref && format('refs/heads/{0}', github.head_ref) || github.ref }}
+        run: |
+          npm run package:runtime -- \
+            --runtime-dir dist/runtime \
+            --python python3 \
+            --ref "$PACKAGE_REF" \
+            --output-dir dist/package
+
       - name: Run application Playwright tests
-        if: env.FORTWEB_RUNTIME_SOURCE_URL != '' && env.FORTWEB_RUNTIME_SOURCE_ARCHIVE_SHA256 != ''
         run: npm run test:e2e
 
       - name: Run isolated runtime canary
-        if: env.FORTWEB_RUNTIME_SOURCE_URL != '' && env.FORTWEB_RUNTIME_SOURCE_ARCHIVE_SHA256 != ''
         run: |
           ready_file=test-results/runtime-canary-ready.json
           server_log=test-results/runtime-canary-server.jsonl
@@ -140,7 +163,6 @@ jobs:
             npm run test:e2e:runtime-canary
 
       - name: Run runtime lifecycle tests
-        if: env.FORTWEB_RUNTIME_SOURCE_URL != '' && env.FORTWEB_RUNTIME_SOURCE_ARCHIVE_SHA256 != ''
         run: |
           ready_file=test-results/runtime-lifecycle-ready.json
           server_log=test-results/runtime-lifecycle-server.jsonl
@@ -172,7 +194,6 @@ jobs:
             npm run test:e2e:runtime-lifecycle
 
       - name: Run source wheelhouse test
-        if: env.FORTWEB_RUNTIME_SOURCE_URL != '' && env.FORTWEB_RUNTIME_SOURCE_ARCHIVE_SHA256 != ''
         run: |
           ready_file=test-results/wheelhouse-ready.json
           server_log=test-results/wheelhouse-server.jsonl
@@ -201,10 +222,6 @@ jobs:
           FORTWEB_RUN_ID="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
           FORTWEB_SOURCE_IDENTITY=test-results/source-identity.txt \
             npm run test:e2e:wheelhouse
-
-      - name: Record source-only proof boundary
-        if: env.FORTWEB_RUNTIME_SOURCE_URL == '' || env.FORTWEB_RUNTIME_SOURCE_ARCHIVE_SHA256 == ''
-        run: echo "Runtime source was not configured. This run proves source contracts only." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload Playwright artifacts on failure
         if: failure()

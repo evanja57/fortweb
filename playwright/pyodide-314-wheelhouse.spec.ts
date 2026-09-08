@@ -84,7 +84,7 @@ const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const FIXTURE_PATH = "/fortweb/_wheelhouse-test/fixture.html";
 const WORKER_PATH = "/fortweb/_wheelhouse-test/worker.mjs";
 const BUILD_PATH = "/fortweb/_wheelhouse-test/build/";
-const WHEELHOUSE_MANIFEST_SHA256 = "697d54f0028a526357f017010a6a5104dfb7e53c99a7c3769437dd9af64ec93c";
+const WHEELHOUSE_MANIFEST_SHA256 = process.env.FORTWEB_RUNTIME_SOURCE_MANIFEST_SHA256 ?? "";
 const TIMEOUT_MS = 900_000;
 
 function requireArtifactDirectory(): string {
@@ -133,6 +133,7 @@ async function terminateWorker(page: Page, worker: Worker): Promise<void> {
 test("@smoke Wheelhouse loads the exact Python 3.14 wheelhouse in a clean worker", async ({ page, context, baseURL }) => {
     test.setTimeout(TIMEOUT_MS);
     expect(baseURL).toBeTruthy();
+    expect(WHEELHOUSE_MANIFEST_SHA256).toMatch(/^[0-9a-f]{64}$/);
 
     const artifactDirectory = requireArtifactDirectory();
     const buildDirectory = requireBuildDirectory();

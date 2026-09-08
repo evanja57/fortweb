@@ -90,8 +90,9 @@ class FortWebRequestHandler(http.server.SimpleHTTPRequestHandler):
         ".json": "application/json",
     }
 
-    def __init__(self, *args, fortweb_root: Path, **kwargs):
+    def __init__(self, *args, fortweb_root: Path, runtime_dir: Path | None = None, **kwargs):
         self.fortweb_root = fortweb_root.resolve()
+        self.runtime_dir = runtime_dir.resolve() if runtime_dir is not None else None
         super().__init__(*args, directory=str(self.fortweb_root.parent), **kwargs)
 
     def _translate_under(self, root: Path, relative: str) -> Path | None:
@@ -102,6 +103,29 @@ class FortWebRequestHandler(http.server.SimpleHTTPRequestHandler):
 
     def translate_path(self, path: str) -> str:
         request_path = unquote(urlsplit(path).path)
+
+        # Artifact mode has one static root and never falls back to source files.
+        runtime = getattr(self, "runtime_dir", None)
+        if runtime is not None:
+            if not request_path.startswith("/fortweb/"):
+                return self._invalid_path()
+            relative = request_path[len("/fortweb/"):]
+            if relative == "app/":
+                relative = "app/index.html"
+            parts = relative.split("/")
+            if any(not part or part in {".", ".."} or part.startswith(".") for part in parts):
+                return self._invalid_path()
+            if parts[0] not in {"app", "vendor", "wheels", "contracts", "pyscript-ci.toml", "runtime-closure.json"}:
+                return self._invalid_path()
+            candidate = runtime
+            for part in parts:
+                candidate /= part
+                if candidate.is_symlink():
+                    return self._invalid_path()
+            candidate = self._translate_under(runtime, relative)
+            if candidate is None or not candidate.is_file():
+                return self._invalid_path()
+            return str(candidate)
 
         # Handle vendor requests
         if request_path.startswith('/fortweb/vendor/'):
@@ -178,7 +202,7 @@ class FortWebRequestHandler(http.server.SimpleHTTPRequestHandler):
         if urlsplit(self.path).path.startswith(PROXY_PREFIX):
             self._proxy_request()
             return
-        if self.path.split("?", 1)[0] in {"/oobi", f"/oobi/{OOBI_AID}/controller"}:
+        if getattr(self, "runtime_dir", None) is None and self.path.split("?", 1)[0] in {"/oobi", f"/oobi/{OOBI_AID}/controller"}:
             self.send_response(200)
             self.send_header("Content-Type", "application/cesr")
             self.send_header("KERI-AID", OOBI_AID)
@@ -348,13 +372,26 @@ def main() -> int:
         help="Path to fortweb repo root (default: parent of scripts/)",
     )
     parser.add_argument(
+        "--runtime-dir",
+        type=Path,
+        help="Serve only this built or extracted runtime; keep the loopback API proxy.",
+    )
+    parser.add_argument(
         "--no-open",
         action="store_true",
         help="Do not open a browser tab",
     )
     args = parser.parse_args()
 
-    doc_root = _libs_root(args.fortweb)
+    if args.runtime_dir is not None:
+        if args.runtime_dir.is_symlink():
+            parser.error("--runtime-dir must be a real directory")
+        doc_root = args.runtime_dir.resolve()
+        for relative in ("app/index.html", "pyscript-ci.toml", "runtime-closure.json"):
+            if not (doc_root / relative).is_file():
+                parser.error(f"runtime is missing {relative}")
+    else:
+        doc_root = _libs_root(args.fortweb)
     os.chdir(doc_root)
 
     url = f"http://{args.host}:{args.port}/fortweb/app/"
@@ -369,7 +406,7 @@ def main() -> int:
         except OSError:
             pass
 
-    handler = functools.partial(FortWebRequestHandler, fortweb_root=args.fortweb)
+    handler = functools.partial(FortWebRequestHandler, fortweb_root=args.fortweb, runtime_dir=args.runtime_dir)
     with FortWebServer((args.host, args.port), handler) as httpd:
         try:
             httpd.serve_forever()

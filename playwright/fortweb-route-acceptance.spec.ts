@@ -154,3 +154,81 @@ test.describe('FortWeb route acceptance', () => {
         await expectNoUnexpectedErrors(page, pageErrors, consoleErrors);
     });
 });
+
+
+for (const outcome of ['saved', 'missing', 'failed'] as const) {
+    test(`vault deep route waits for the initial catalog (${outcome})`, async ({ page }) => {
+        const pageErrors = collectUnexpectedPageErrors(page);
+        let releaseCatalog!: () => void;
+        let catalogRequested!: () => void;
+        const catalogGate = new Promise<void>((resolve) => { releaseCatalog = resolve; });
+        const catalogStarted = new Promise<void>((resolve) => { catalogRequested = resolve; });
+
+        await page.route('**/app/runtime/bridge.js', async (route) => {
+            await route.fulfill({
+                contentType: 'text/javascript',
+                body: `
+                    export function createRuntimeBridge() {
+                        return {
+                            async request(method) {
+                                if (method !== 'vaults.list') throw new Error('Unexpected method: ' + method);
+                                const response = await fetch('/__test_vaults');
+                                if (!response.ok) throw new Error(await response.text());
+                                return response.json();
+                            },
+                            destroy() {},
+                        };
+                    }
+                `,
+            });
+        });
+        await page.route('**/__test_vaults', async (route) => {
+            catalogRequested();
+            await catalogGate;
+            await route.fulfill(outcome === 'failed' ? {
+                status: 503,
+                body: 'Unable to load vaults.',
+            } : {
+                json: {
+                    vaults: outcome === 'saved' ? [{
+                        id: 'cold-vault',
+                        alias: 'Saved Vault',
+                        createdAt: '2026-01-01T00:00:00Z',
+                    }] : [],
+                },
+            });
+        });
+
+        try {
+            await page.goto('/fortweb/app/index.html#/vaults/cold-vault/identifiers');
+            await catalogStarted;
+            await expect(page.getByRole('heading', { name: 'Route Not Found' })).toHaveCount(0);
+            await expect(page.getByRole('status')).toHaveText('Loading vault...');
+            await expect(page).toHaveURL(/#\/vaults\/cold-vault\/identifiers$/);
+
+            if (outcome === 'saved') {
+                await page.evaluate(() => { window.location.hash = '#/'; });
+                await expect(page.locator('.home-splash')).toBeVisible();
+                await page.evaluate(() => { window.location.hash = '#/_fixtures/settings'; });
+                await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
+                await page.evaluate(() => { window.location.hash = '#/vaults/cold-vault/identifiers'; });
+                await expect(page.getByRole('status')).toHaveText('Loading vault...');
+            }
+
+            releaseCatalog();
+            if (outcome === 'saved') {
+                await expect(page.getByRole('heading', { name: 'Open Saved Vault' })).toBeVisible();
+                await expect(page).toHaveURL(/#\/vaults\/cold-vault\/unlock$/);
+            } else if (outcome === 'missing') {
+                await expect(page.getByRole('heading', { name: 'Route Not Found' })).toBeVisible();
+            } else {
+                await expect(page.getByRole('heading', { name: 'Runtime Error' })).toBeVisible();
+                await expect(page.getByText('Unable to load vaults.', { exact: true })).toBeVisible();
+                await expect(page.getByRole('heading', { name: 'Route Not Found' })).toHaveCount(0);
+            }
+            expect(pageErrors).toEqual([]);
+        } finally {
+            releaseCatalog();
+        }
+    });
+}

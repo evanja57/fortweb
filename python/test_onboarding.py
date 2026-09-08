@@ -104,5 +104,39 @@ class SessionResourceFailureTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(raised.exception.code, "CONFLICT")
 
 
+class KelReplayTest(unittest.TestCase):
+    def test_replay_keeps_inception_and_receipts_and_fills_missing_events(self):
+        onboarding = _load_module()
+        inception = b"0:inception-with-receipts"
+        rotation = b"2:rotation-with-receipts"
+        onboarding.vaulting.load_modules = lambda: {
+            "serdering": types.SimpleNamespace(
+                SerderKERI=lambda *, raw: types.SimpleNamespace(
+                    sn=int(raw[:1]), ked={"s": raw[:1].decode()}
+                )
+            )
+        }
+
+        def own_event(*, sn):
+            if sn != 1:
+                self.fail("An available replay message must preserve its attachments.")
+            return b"1:missing-event"
+
+        hab = types.SimpleNamespace(
+            pre="account",
+            kever=types.SimpleNamespace(sn=0),
+            db=types.SimpleNamespace(clonePreIter=lambda *, pre: iter([inception])),
+            msgOwnEvent=own_event,
+        )
+        self.assertEqual(list(onboarding._iter_hab_kel_messages(hab)), [inception])
+
+        hab.kever.sn = 2
+        hab.db.clonePreIter = lambda *, pre: iter([rotation, inception, inception])
+        self.assertEqual(
+            list(onboarding._iter_hab_kel_messages(hab)),
+            [inception, b"1:missing-event", rotation],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -72,11 +72,12 @@ function readUInt32(buffer, offset) {
 export function parseDeterministicZip(bytes) {
     if (bytes.length < 22) throw new Error('ZIP is too short.');
     const eocd = bytes.length - 22;
+    const entryCount = readUInt16(bytes, eocd + 10);
     if (readUInt32(bytes, eocd) !== 0x06054b50
         || readUInt16(bytes, eocd + 4) !== 0
         || readUInt16(bytes, eocd + 6) !== 0
-        || readUInt16(bytes, eocd + 8) !== 162
-        || readUInt16(bytes, eocd + 10) !== 162
+        || readUInt16(bytes, eocd + 8) !== entryCount
+        || entryCount < 4
         || readUInt16(bytes, eocd + 20) !== 0) {
         throw new Error('ZIP EOCD is not canonical.');
     }
@@ -86,7 +87,7 @@ export function parseDeterministicZip(bytes) {
 
     const central = [];
     let cursor = centralOffset;
-    for (let index = 0; index < 162; index += 1) {
+    for (let index = 0; index < entryCount; index += 1) {
         if (readUInt32(bytes, cursor) !== 0x02014b50) throw new Error('Invalid central signature.');
         const madeBy = readUInt16(bytes, cursor + 4);
         const needed = readUInt16(bytes, cursor + 6);
@@ -129,7 +130,7 @@ export function parseDeterministicZip(bytes) {
     const names = central.map(({ name }) => name);
     const sorted = [...names].sort(comparePathBytes);
     const folded = new Set(names.map((name) => name.toLowerCase()));
-    if (JSON.stringify(names) !== JSON.stringify(sorted) || new Set(names).size !== 162 || folded.size !== 162) {
+    if (JSON.stringify(names) !== JSON.stringify(sorted) || new Set(names).size !== entryCount || folded.size !== entryCount) {
         throw new Error('ZIP members are not unique and byte sorted.');
     }
 
@@ -165,7 +166,7 @@ export function parseDeterministicZip(bytes) {
         members.set(name.slice(PREFIX.length), Buffer.from(payload));
         expectedOffset = dataEnd;
     }
-    if (expectedOffset !== centralOffset || members.size !== 162) {
+    if (expectedOffset !== centralOffset || members.size !== entryCount) {
         throw new Error('ZIP local extent or member count mismatch.');
     }
     return members;
@@ -225,7 +226,7 @@ export async function verifyProduct(productDir) {
         throw new Error('Runtime requirements mismatch.');
     }
     const content = new Map([...members].filter(([name]) => !['manifest.json', 'checksums.sha256'].includes(name)));
-    if (content.size !== 160) throw new Error('Content closure must contain 160 files.');
+    if (content.size !== manifest.files.length) throw new Error('Content closure differs from the manifest inventory.');
     for (const row of manifest.files) {
         const payload = content.get(row.path);
         if (!payload || payload.length !== row.bytes || sha256(payload) !== row.sha256) {

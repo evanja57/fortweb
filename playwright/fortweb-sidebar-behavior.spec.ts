@@ -72,6 +72,54 @@ async function expectNoUnexpectedErrors(page: Page, pageErrors: string[], consol
 }
 
 test.describe('FortWeb sidebar behavior', () => {
+    test('responsive navigation is accessible only while open', async ({ page }) => {
+        await page.setViewportSize({ width: 868, height: 998 });
+        await page.goto('/fortweb/app/index.html#/_fixtures/identifiers/populated');
+        const navigation = page.getByRole('navigation', { name: 'Vault navigation' });
+        await expect(navigation).not.toBeVisible();
+        await page.getByRole('button', { name: 'Open navigation' }).click();
+        await expect(navigation).toBeVisible();
+        await expect(navigation.getByRole('link', { name: 'KERI Foundation', exact: true })).toBeVisible();
+        await page.getByRole('button', { name: 'Close navigation' }).click();
+        await expect(navigation).not.toBeVisible();
+    });
+
+    for (const startup of ['delayed', 'failed'] as const) {
+        test(`vault drawer works while runtime startup is ${startup}`, async ({ page }) => {
+            const pageErrors = collectUnexpectedPageErrors(page);
+            let releaseConfig!: () => void;
+            const configGate = new Promise<void>((resolve) => { releaseConfig = resolve; });
+            let requestedConfig!: () => void;
+            const configRequested = new Promise<void>((resolve) => { requestedConfig = resolve; });
+            await page.route('**/pyscript-ci.toml', async (route) => {
+                requestedConfig();
+                if (startup === 'delayed') {
+                    await configGate;
+                }
+                await route.fulfill({ status: 503, body: 'Runtime unavailable' });
+            });
+
+            try {
+                await page.goto('/fortweb/app/index.html#/');
+                await configRequested;
+                await page.locator('[data-action="toggle-drawer"]').click();
+                const drawer = page.getByRole('dialog', { name: 'Vault switcher' });
+                await expect(drawer).toBeVisible();
+                await drawer.getByRole('button', { name: 'Initialize New Vault' }).click();
+                await expect(page.locator('[data-create-vault-form]')).toBeVisible();
+                await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+                await expect(drawer).not.toBeVisible();
+                await page.locator('[data-action="toggle-drawer"]').click();
+                await expect(drawer).toBeVisible();
+                await drawer.getByRole('button', { name: 'Close vault switcher' }).click();
+                await expect(drawer).not.toBeVisible();
+                expect(pageErrors).toEqual([]);
+            } finally {
+                releaseConfig();
+            }
+        });
+    }
+
     test('core route shows main nav with KERI Foundation entry', async ({ page }) => {
         const pageErrors = collectUnexpectedPageErrors(page);
         const consoleErrors = collectUnexpectedConsoleErrors(page);

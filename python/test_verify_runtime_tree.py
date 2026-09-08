@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import importlib.util
+import json
+import shutil
+import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 REPO = Path(__file__).resolve().parent.parent
@@ -24,6 +28,32 @@ verifier = _load_verifier()
 
 
 class RuntimeRuntimeVerifierTest(unittest.TestCase):
+    def test_compiled_output_rejects_tampering_and_stale_source(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            source = root / "source"
+            runtime = root / "runtime"
+            (source / "app").mkdir(parents=True)
+            (runtime / "app").mkdir(parents=True)
+            shutil.copytree(REPO / "node_modules/typescript", source / "node_modules/typescript")
+            shutil.copy2(REPO / "package-lock.json", source / "package-lock.json")
+            (source / "tsconfig.build.json").write_text(json.dumps({
+                "compilerOptions": {"target": "ES2022", "module": "ESNext", "rootDir": ".", "types": [], "skipLibCheck": True},
+                "include": ["app/*.ts"],
+            }))
+            original = "export const value = 1;\n"
+            (source / "app/example.ts").write_text(original)
+            (runtime / "app/example.js").write_text(original)
+            with patch.object(verifier, "REPO", source):
+                self.assertEqual(verifier.verify_compiled_outputs(runtime), 1)
+                (runtime / "app/example.js").write_text("throw new Error('tampered');\n")
+                with self.assertRaisesRegex(RuntimeError, "compiled runtime file does not match current source"):
+                    verifier.verify_compiled_outputs(runtime)
+                (runtime / "app/example.js").write_text(original)
+                (source / "app/example.ts").write_text("export const value = 2;\n")
+                with self.assertRaisesRegex(RuntimeError, "compiled runtime file does not match current source"):
+                    verifier.verify_compiled_outputs(runtime)
+
     def test_accepts_the_exact_packaged_config(self):
         raw = (RUNTIME / "pyscript-ci.toml").read_bytes()
         config = verifier.validate_runtime_config(raw, RUNTIME)

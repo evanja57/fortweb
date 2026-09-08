@@ -24,7 +24,6 @@ from urllib.parse import parse_qs, urlsplit
 
 REPO = Path(__file__).absolute().parent.parent
 RUNTIME_ROOT = Path(os.environ.get("FORTWEB_RUNTIME_DIR", REPO / "dist" / "runtime")).resolve()
-WHEELHOUSE_MANIFEST_SHA256 = "697d54f0028a526357f017010a6a5104dfb7e53c99a7c3769437dd9af64ec93c"
 WHEELHOUSE_PUBLIC_ROOT = "/fortweb/_wheelhouse-test/build/"
 OOBI_AID = "EGqt2oX6SPANU7CXCNo6XTaR-RDkmw07emyZ-Fkjc0tW"
 OOBI_PATH = f"/oobi/{OOBI_AID}/controller"
@@ -262,10 +261,10 @@ def _application_routes(inventory_path: Path) -> dict[str, Asset]:
     return routes
 
 
-def _wheelhouse_routes(wheelhouse_root: Path) -> dict[str, Asset]:
+def _wheelhouse_routes(wheelhouse_root: Path, manifest_sha256: str) -> dict[str, Asset]:
     manifest_asset = _read_owned_file(wheelhouse_root / "manifest.json", wheelhouse_root)
     digest = hashlib.sha256(manifest_asset.body).hexdigest()
-    if digest != WHEELHOUSE_MANIFEST_SHA256:
+    if digest != manifest_sha256:
         raise RuntimeError(f"Reviewed wheelhouse manifest changed: {digest}")
     manifest = json.loads(manifest_asset.body)
     core_files = manifest["runtime"]["core_files"]
@@ -308,6 +307,7 @@ def _load_routes(
     mode: str,
     inventory_path: Path | None,
     wheelhouse_root: Path | None,
+    manifest_sha256: str = "",
 ) -> dict[str, Asset]:
     if mode == "isolated":
         if inventory_path is None:
@@ -322,7 +322,7 @@ def _load_routes(
             raise RuntimeError("Wheelhouse mode does not accept a runtime inventory")
         if wheelhouse_root is None:
             raise RuntimeError("Wheelhouse mode requires --wheelhouse-root")
-        return _wheelhouse_routes(wheelhouse_root)
+        return _wheelhouse_routes(wheelhouse_root, manifest_sha256)
     raise ValueError(mode)
 
 
@@ -392,9 +392,10 @@ class RuntimeBrowserServer(ThreadingHTTPServer):
         mode: str,
         inventory_path: Path | None = None,
         wheelhouse_root: Path | None = None,
+        manifest_sha256: str = "",
     ):
         self.mode = mode
-        self.routes = _load_routes(mode, inventory_path, wheelhouse_root)
+        self.routes = _load_routes(mode, inventory_path, wheelhouse_root, manifest_sha256)
         self.request_sequence = 0
         self.record_lock = threading.Lock()
         super().__init__(address, handler)
@@ -547,6 +548,7 @@ def main() -> int:
     parser.add_argument("--ready-file", type=Path, required=True)
     parser.add_argument("--inventory", type=Path)
     parser.add_argument("--wheelhouse-root", type=Path)
+    parser.add_argument("--source-manifest-sha256", default=os.environ.get("FORTWEB_RUNTIME_SOURCE_MANIFEST_SHA256", ""))
     args = parser.parse_args()
 
     with RuntimeBrowserServer(
@@ -555,6 +557,7 @@ def main() -> int:
         mode=args.mode,
         inventory_path=args.inventory,
         wheelhouse_root=args.wheelhouse_root,
+        manifest_sha256=args.source_manifest_sha256,
     ) as server:
         host, port = server.server_address[:2]
         payload = {"host": host, "mode": args.mode, "port": port, "url": f"http://{host}:{port}"}

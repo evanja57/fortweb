@@ -70,6 +70,21 @@ class ContainedPathTest(unittest.TestCase):
                 str(root.resolve() / ".fortweb-invalid-path"),
             )
 
+            # Explicit artifact serving must not read the source or a sibling tree.
+            handler.runtime_dir = runtime.resolve()
+            (root / "app").mkdir()
+            (root / "app" / "source-only.js").write_text("source")
+            (runtime / "app").mkdir()
+            (runtime / "app" / "index.html").write_text("artifact")
+            (runtime / "app" / "linked.js").symlink_to(root / "app" / "source-only.js")
+            self.assertEqual(handler.translate_path("/fortweb/app/"), str((runtime / "app" / "index.html").resolve()))
+            self.assertEqual(handler.translate_path("/fortweb/runtime-closure.json"), str(closure.resolve()))
+            self.assertEqual(handler.translate_path("/fortweb/wheels/example.whl"), str(wheel.resolve()))
+            for route in ("/fortweb/app/source-only.js", "/fortweb/app/linked.js", "/fortweb/scripts/serve_local.py",
+                          "/fortweb/app/../runtime-closure.json", "/fortweb/wheels/", "/outside.txt"):
+                with self.subTest(route=route):
+                    self.assertEqual(handler.translate_path(route), str(root.resolve() / ".fortweb-invalid-path"))
+
 
 class ProxyTargetTest(unittest.TestCase):
     def _target(self, path):

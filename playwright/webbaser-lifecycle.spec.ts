@@ -506,6 +506,7 @@ test("@smoke WebBaser persists and clears WebBaser state across explicit PyWorke
         "browserclienter-http-oobi",
         "aggregate-close-partial-failure-retry",
         "mixed-version-witness-receipt-ingestion",
+        "multi-witness-receipts-from-parser",
         "nested-v2-exn-stored-from-parser",
     ]));
     expect(created.fixtures).toBeTruthy();

@@ -117,8 +117,8 @@ function requireSourceRows(rows, label) {
 }
 
 export function validateFileRows(rows, expectedCount) {
-    if (!Array.isArray(rows) || rows.length !== expectedCount) {
-        throw new Error(`Manifest files must contain exactly ${expectedCount} rows.`);
+    if (!Array.isArray(rows) || rows.length === 0 || (expectedCount !== undefined && rows.length !== expectedCount)) {
+        throw new Error('Manifest files must contain a nonempty, complete inventory.');
     }
     const paths = new Set();
     const folds = new Set();
@@ -148,7 +148,7 @@ export function validateFileRows(rows, expectedCount) {
 }
 
 export function generateManifest({ files, provenance, fortwebCommitSha }) {
-    validateFileRows(files, 160);
+    validateFileRows(files);
     requireCommit(fortwebCommitSha, 'Manifest FortWeb commit');
     const manifest = {
         contracts: { runtime_requirements: { path: REQUIREMENTS_PATH } },
@@ -193,7 +193,7 @@ export function validateManifest(manifest) {
     if (manifest.contracts.runtime_requirements.path !== REQUIREMENTS_PATH) {
         throw new Error('Manifest runtime requirements path is not canonical.');
     }
-    const paths = validateFileRows(manifest.files, 160);
+    const paths = validateFileRows(manifest.files);
     if (!paths.has(ENTRYPOINT) || !paths.has(REQUIREMENTS_PATH)) {
         throw new Error('Manifest does not inventory its entrypoint and runtime requirements.');
     }

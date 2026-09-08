@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, open, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, open, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -16,6 +16,7 @@ import {
     ZIP_BASENAME,
 } from './runtime-package-manifest.mjs';
 import { verifyProduct } from './verify-runtime-package.mjs';
+import { readRuntimePayloads } from './package-runtime.mjs';
 
 const digest = '1'.repeat(64);
 
@@ -93,7 +94,7 @@ async function writeNew(filename, data) {
 
 async function fixture(root) {
     const content = new Map([['app/index.html', Buffer.from('app')]]);
-    for (let index = 0; index < 158; index += 1) {
+    for (let index = 0; index < 3; index += 1) {
         content.set(`payload/${String(index).padStart(3, '0')}.bin`, Buffer.from([index]));
     }
     const requirements = Buffer.from(serializeRuntimeRequirements());
@@ -130,10 +131,34 @@ test('portable verifier accepts the canonical generic product and rejects a bad 
     try {
         await fixture(root);
         const report = await verifyProduct(root);
-        assert.equal(report.zip_entries, 162);
+        assert.equal(report.zip_entries, 7);
         await rm(path.join(root, `${ZIP_BASENAME}.sha256`));
         await writeNew(path.join(root, `${ZIP_BASENAME}.sha256`), Buffer.from('bad\n'));
         await assert.rejects(verifyProduct(root), /sidecar/);
+    } finally {
+        await rm(root, { recursive: true, force: true });
+    }
+});
+
+test('producer reads only the complete verified runtime and rejects unsafe paths', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'fortweb-runtime-input.'));
+    try {
+        await mkdir(path.join(root, 'app'));
+        await writeFile(path.join(root, 'app/index.html'), 'app');
+        const rows = [{ path: 'app/index.html', bytes: 3, sha256: sha256('app') }];
+        // macOS exposes its temporary directory through /var -> /private/var.
+        const { realpath } = await import('node:fs/promises');
+        const runtime = await realpath(root);
+        assert.equal((await readRuntimePayloads(runtime, rows)).get('app/index.html').toString(), 'app');
+        await assert.rejects(readRuntimePayloads(runtime, [{ ...rows[0], path: '../outside' }]), /path/i);
+        await writeFile(path.join(root, 'extra'), 'extra');
+        await assert.rejects(readRuntimePayloads(runtime, rows), /file set/);
+        await rm(path.join(root, 'extra'));
+        await writeFile(path.join(root, 'app/index.html'), 'changed');
+        await assert.rejects(readRuntimePayloads(runtime, rows), /byte mismatch/);
+        await rm(path.join(root, 'app/index.html'));
+        await symlink('../outside', path.join(root, 'app/index.html'));
+        await assert.rejects(readRuntimePayloads(runtime, rows), /symlink/);
     } finally {
         await rm(root, { recursive: true, force: true });
     }

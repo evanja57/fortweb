@@ -103,12 +103,14 @@ test.describe('FortWeb smoke', () => {
 
         await expect(page.locator('#app-root')).toBeAttached();
         await expect(page.locator('.topbar__brand-link')).toBeVisible();
+        await expect(page.locator('.topbar__title')).toHaveText('FortWeb');
+        await expect(page.getByRole('heading', { name: 'FortWeb', exact: true })).toBeAttached();
         await expect(page.locator('.home-splash')).toBeVisible();
         await expect(page.locator('.shell-tabbar')).toHaveCount(0);
         await expect(page.getByText('Browser Wallet')).toHaveCount(0);
         await expect(page.getByText('Create your first vault to begin using the mobile wallet.')).toHaveCount(0);
         await expect(page.getByRole('heading', { name: 'Your Vaults' })).toHaveCount(0);
-        await expect(page).toHaveTitle(/Locksmith \| Locksmith/);
+        await expect(page).toHaveTitle(/FortWeb \| FortWeb/);
 
         await page.waitForFunction(() => (
             (window as typeof window & { __fortwebNativeMessages?: Array<{ message?: string }> })
@@ -126,6 +128,16 @@ test.describe('FortWeb smoke', () => {
         await page.getByRole('button', { name: 'Open', exact: true }).click();
         await expect(page.getByRole('heading', { name: 'Local Identifiers', exact: true })).toBeVisible();
         await page.getByRole('button', { name: 'Lock vault' }).click();
+        await expect(page.getByRole('heading', { name: `Open ${vaultName}` })).toBeVisible();
+
+        await page.getByRole('button', { name: 'Vaults', exact: true }).click();
+        const drawer = page.getByRole('dialog', { name: 'Vault switcher' });
+        await drawer.getByRole('button', { name: 'Initialize New Vault' }).click();
+        await expect(page.locator('[data-create-vault-form]')).toBeVisible();
+        await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+        await page.getByRole('button', { name: 'Vaults', exact: true }).click();
+        await drawer.getByRole('button', { name: new RegExp(vaultName) }).click();
+        await expect(drawer).not.toBeVisible();
         await expect(page.getByRole('heading', { name: `Open ${vaultName}` })).toBeVisible();
 
         await page.evaluate(() => {
@@ -167,7 +179,7 @@ test.describe('FortWeb smoke', () => {
 
         await page.goto('/fortweb/app/index.html#/_fixtures/identifiers/populated');
 
-        await expect(page).toHaveTitle(/Identifiers \| Locksmith/);
+        await expect(page).toHaveTitle(/Identifiers \| FortWeb/);
         await expect(page.getByText('Local Identifiers')).toBeVisible();
         await expect(page.getByRole('link', { name: 'primary-aid' })).toBeVisible();
 
@@ -180,7 +192,7 @@ test.describe('FortWeb smoke', () => {
 
         await page.goto('/fortweb/app/index.html#/_fixtures/witnesses/account');
 
-        await expect(page).toHaveTitle(/KERI Foundation Witnesses \| Locksmith/);
+        await expect(page).toHaveTitle(/KERI Foundation Witnesses \| FortWeb/);
         await expect(page.getByText('Hosted Witnesses')).toBeVisible();
         await expect(page.getByRole('cell', { name: 'KF Witness wan-0' })).toBeVisible();
 

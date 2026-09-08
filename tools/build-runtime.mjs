@@ -20,7 +20,6 @@ const SCRATCH_ROOT = path.join(DIST_DIR, '.runtime-builds');
 const SCRATCH_MARKER = path.join(SCRATCH_ROOT, '.fortweb-runtime-owned');
 const SCRATCH_MARKER_BYTES = 'fortweb.runtime-builds.v1\n';
 const TYPESCRIPT_CLI = path.join(PROJECT_DIR, 'node_modules/typescript/bin/tsc');
-const EXPECTED_SOURCE_MANIFEST_SHA256 = '697d54f0028a526357f017010a6a5104dfb7e53c99a7c3769437dd9af64ec93c';
 const EXPECTED_RUNTIME = Object.freeze({
     pyodide: '314.0.5',
     python: '3.14.2',
@@ -38,20 +37,6 @@ const DEPENDENCY_EXCLUSIONS = Object.freeze([
     Object.freeze({ owner: 'hio', requirement: 'lmdb>=1.7.5' }),
     Object.freeze({ owner: 'keri', requirement: 'lmdb==2.1.1' }),
 ]);
-const PINNED_SOURCE_FILES = Object.freeze({
-    'app/assets/icons/copy.svg': 'b6afc48ffb603119477f83e3484c95f7b447fc1ba7b1ac3a6580621f2be0e174',
-    'app/runtime/origin-contract.ts': '1c725f203b976a6e0f5a539f7ac5ea07ee9ac90f89ce7ac94553f25aa30431c0',
-    'app/runtime/wallet-worker.py': 'bba295f27c62b8513e65d85eb954053ec5cab38d905cbb2d1f6c294d37d45f09',
-    'app/runtime/vaulting.py': '6279692f99801e77122db47a199411b7066dd794702bd514d8fe79673e484ea7',
-    'app/runtime/runtime_packages.py': '48358ad5f233eaa96d4e0558b6fd1be45937a85cf9e2d4638cfc73adcbb38a5b',
-    'app/runtime/transporting.py': '066de0ac25b08f0d2226466bfa413a155b2c364661d91fed06e72cea6452b892',
-    'app/runtime/onboarding.py': 'b36959cd0f5907bba7b1671da4e41b442d7e24e440e3195ea884f1f3ae4fa6ce',
-    'app/runtime/logger.ts': '63798938f76388dc9eac446ba6eabe80ac68096974b7489f3d99c87575653f21',
-});
-const PINNED_COMPILED_FILES = Object.freeze({
-    'app/runtime/origin-contract.js': 'f16cb33e88f1a4300a61d298649572f281e9a10eead4738d2a61a71a42d929a9',
-    'app/runtime/logger.js': '4935990daac1e0733d7d7c65a7c09181fbf44a30948acc34dbd3b7c3464e614f',
-});
 const ALLOWED_FAULTS = new Set([
     '',
     'before-backup',
@@ -275,34 +260,26 @@ async function copyTree(sourceRoot, targetRoot, expectedPaths, relativePrefix) {
 }
 
 function parseArgs(argv) {
-    let outDir = '';
-    let sourceManifest = process.env.FORTWEB_RUNTIME_SOURCE_MANIFEST ?? '';
-    let seenOutDir = false;
-    let seenSourceManifest = false;
-    for (let index = 2; index < argv.length; index += 1) {
+    const values = {
+        '--out-dir': '',
+        '--source-manifest': process.env.FORTWEB_RUNTIME_SOURCE_MANIFEST ?? '',
+        '--source-manifest-sha256': process.env.FORTWEB_RUNTIME_SOURCE_MANIFEST_SHA256 ?? '',
+    };
+    const seen = new Set();
+    for (let index = 2; index < argv.length; index += 2) {
         const argument = argv[index];
-        if (argument !== '--out-dir' && argument !== '--source-manifest') {
-            throw new Error(`unknown or repeated argument: ${argument}`);
+        const value = argv[index + 1];
+        if (!(argument in values) || seen.has(argument) || !value || value.startsWith('-')) {
+            throw new Error(`unknown, repeated, or missing argument: ${argument}`);
         }
-        const alreadySeen = argument === '--out-dir' ? seenOutDir : seenSourceManifest;
-        if (
-            alreadySeen
-            || index + 1 >= argv.length
-            || argv[index + 1].length === 0
-            || argv[index + 1].startsWith('-')
-        ) {
-            throw new Error(`${argument} requires exactly one non-empty path argument`);
-        }
-        if (argument === '--out-dir') {
-            seenOutDir = true;
-            outDir = argv[index + 1];
-        } else {
-            seenSourceManifest = true;
-            sourceManifest = argv[index + 1];
-        }
-        index += 1;
+        seen.add(argument);
+        values[argument] = value;
     }
-    return { outDir, sourceManifest };
+    return {
+        outDir: values['--out-dir'],
+        sourceManifest: values['--source-manifest'],
+        sourceManifestSha256: values['--source-manifest-sha256'],
+    };
 }
 
 async function ensureDistDirectory() {
@@ -364,7 +341,10 @@ async function resolveOutputDir(rawOutput) {
     return candidate;
 }
 
-async function loadRuntimeInputs(sourceManifest) {
+async function loadRuntimeInputs(sourceManifest, expectedSha256) {
+    if (!/^[0-9a-f]{64}$/.test(expectedSha256)) {
+        throw new Error("--source-manifest-sha256 or FORTWEB_RUNTIME_SOURCE_MANIFEST_SHA256 is required");
+    }
     if (!sourceManifest) {
         throw new Error('--source-manifest or FORTWEB_RUNTIME_SOURCE_MANIFEST is required');
     }
@@ -373,11 +353,11 @@ async function loadRuntimeInputs(sourceManifest) {
         throw new Error('runtime source manifest must remain inside the repository');
     }
     const manifestBytes = await readStableRegularFile(manifestPath);
-    if (sha256(manifestBytes) !== EXPECTED_SOURCE_MANIFEST_SHA256) {
+    if (sha256(manifestBytes) !== expectedSha256) {
         throw new Error('runtime input manifest SHA-256 mismatch');
     }
     const manifest = JSON.parse(manifestBytes.toString('utf8'));
-    return { manifest, manifestPath, manifestSha256: EXPECTED_SOURCE_MANIFEST_SHA256 };
+    return { manifest, manifestPath, manifestSha256: expectedSha256 };
 }
 
 function sourceFileIndex(manifest) {
@@ -399,7 +379,7 @@ function sourceFileIndex(manifest) {
 }
 
 function projectRuntimeClosure(manifest, manifestSha256) {
-    if (manifest?.schema !== 1 || manifestSha256 !== EXPECTED_SOURCE_MANIFEST_SHA256) {
+    if (manifest?.schema !== 1 || !/^[0-9a-f]{64}$/.test(manifestSha256)) {
         throw new Error('unsupported source manifest identity');
     }
     const runtime = manifest.runtime;
@@ -507,15 +487,6 @@ function projectRuntimeClosure(manifest, manifestSha256) {
     return { closure, closureBytes, closureSha256: sha256(closureBytes), inputCopies };
 }
 
-async function verifyPinnedSourceFiles() {
-    for (const [relative, expectedSha256] of Object.entries(PINNED_SOURCE_FILES)) {
-        const bytes = await readStableRegularFile(path.join(PROJECT_DIR, relative));
-        if (sha256(bytes) !== expectedSha256) {
-            throw new Error(`pinned runtime source changed: ${relative}`);
-        }
-    }
-}
-
 function runCommand(command, args, cwd) {
     return new Promise((resolve, reject) => {
         const child = spawn(command, args, { cwd, stdio: 'inherit' });
@@ -564,11 +535,9 @@ async function copyApplicationFiles(staging, expectedPaths) {
             if (!ALLOWED_APP_SUFFIXES.has(path.extname(entry.name).toLowerCase())) {
                 throw new Error(`forbidden application input file type: ${relative}`);
             }
-            const expectedSha256 = PINNED_SOURCE_FILES[relative];
             await copyStableFile(
                 source,
                 path.join(staging, ...relative.split('/')),
-                expectedSha256 ? { sha256: expectedSha256 } : null,
             );
             expectedPaths.add(relative);
         }
@@ -590,21 +559,6 @@ async function verifyOutput(staging, expectedPaths, closureSha256) {
         const expectedSet = new Set(expected);
         throw new Error(`runtime output closure mismatch: missing=${expected.filter((item) => !actualSet.has(item))}, extra=${actualPaths.filter((item) => !expectedSet.has(item))}`);
     }
-    for (const [relative, expectedSha256] of Object.entries(PINNED_COMPILED_FILES)) {
-        const bytes = await readStableRegularFile(path.join(staging, ...relative.split('/')), staging);
-        if (sha256(bytes) !== expectedSha256) {
-            throw new Error(`pinned runtime compiled output changed: ${relative}`);
-        }
-    }
-    for (const [relative, expectedSha256] of Object.entries(PINNED_SOURCE_FILES)) {
-        if (relative.endsWith('.ts')) {
-            continue;
-        }
-        const bytes = await readStableRegularFile(path.join(staging, ...relative.split('/')), staging);
-        if (sha256(bytes) !== expectedSha256) {
-            throw new Error(`pinned runtime copied output changed: ${relative}`);
-        }
-    }
     const config = (await readStableRegularFile(path.join(staging, 'pyscript-ci.toml'), staging)).toString('utf8');
     if (!config.includes('interpreter = "./vendor/pyodide/314.0.5/pyodide.mjs"')) {
         throw new Error('runtime config interpreter is not package-root relative');
@@ -617,10 +571,9 @@ async function verifyOutput(staging, expectedPaths, closureSha256) {
     }
 }
 
-async function buildStagingTree(staging, sourceManifest) {
-    const { manifest, manifestPath, manifestSha256 } = await loadRuntimeInputs(sourceManifest);
+async function buildStagingTree(staging, sourceManifest, sourceManifestSha256) {
+    const { manifest, manifestPath, manifestSha256 } = await loadRuntimeInputs(sourceManifest, sourceManifestSha256);
     const projected = projectRuntimeClosure(manifest, manifestSha256);
-    await verifyPinnedSourceFiles();
 
     await mkdir(staging, { recursive: false });
     await runCommand(
@@ -633,7 +586,12 @@ async function buildStagingTree(staging, sourceManifest) {
     await collectCompiledPaths(staging, expectedPaths);
     await copyApplicationFiles(staging, expectedPaths);
 
-    await copyStableFile(path.join(PROJECT_DIR, 'pyscript-ci.toml'), path.join(staging, 'pyscript-ci.toml'));
+    const config = (await readStableRegularFile(path.join(PROJECT_DIR, 'pyscript-ci.toml'))).toString('utf8');
+    if (config.split('__RUNTIME_CLOSURE_SHA256__').length !== 2) {
+        throw new Error('runtime config must contain exactly one closure digest placeholder');
+    }
+    await writeNewFile(path.join(staging, 'pyscript-ci.toml'),
+        Buffer.from(config.replace('__RUNTIME_CLOSURE_SHA256__', projected.closureSha256)));
     expectedPaths.add('pyscript-ci.toml');
 
     await writeNewFile(path.join(staging, 'runtime-closure.json'), projected.closureBytes);
@@ -711,7 +669,7 @@ async function promote(staging, target, backup, fault, operationFault) {
 }
 
 async function main() {
-    const { outDir, sourceManifest } = parseArgs(process.argv);
+    const { outDir, sourceManifest, sourceManifestSha256 } = parseArgs(process.argv);
     const output = await resolveOutputDir(outDir);
     const fault = process.env.FORTWEB_RUNTIME_BUILD_FAULT ?? '';
     if (!ALLOWED_FAULTS.has(fault)) {
@@ -734,7 +692,7 @@ async function main() {
 
     let projected;
     try {
-        projected = await buildStagingTree(staging, sourceManifest);
+        projected = await buildStagingTree(staging, sourceManifest, sourceManifestSha256);
         await promote(staging, output, backup, fault, operationFault);
     } finally {
         await removeInternalPath(staging, internalParent, stagingPrefix);

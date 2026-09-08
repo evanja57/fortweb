@@ -299,9 +299,12 @@ def _iter_hab_kel_messages(hab):
             continue
         messages[sn] = raw
 
-    last_sn = int(getattr(getattr(hab, "kever", None), "sn", -1) or -1)
+    last_sn = int(getattr(getattr(hab, "kever", None), "sn", -1))
     for sn in range(last_sn + 1):
-        yield messages.get(sn, bytes(_msg_own_event(hab, sn=sn)))
+        if sn in messages:
+            yield messages[sn]
+        else:
+            yield bytes(_msg_own_event(hab, sn=sn))
 
 
 def _totp_code(seed: str, *, period: int = 30, digits: int = 6) -> str:
@@ -896,6 +899,51 @@ async def _rotate_kf_account_to_witnesses(
             f"Insufficient witness receipts after rotation: got {len(wigs)}, need {hab.kever.toader.num}. {detail}",
         )
 
+    # Match native Receiptor: each witness needs its peers' receipts and endpoints.
+    modules = vaulting.load_modules()
+    event = hab.kever.serder
+    event_wits = list(hab.kever.wits)
+    receipts = {event_wits[wiger.index]: wiger for wiger in wigs}
+    for witness in witnesses:
+        peers = [eid for eid in event_wits if eid != witness["eid"] and eid in receipts]
+        if not peers:
+            continue
+        for eid in peers:
+            for scheme, _ in hab.fetchUrls(eid=eid).firsts():
+                locations = hab.loadLocScheme(eid=eid, scheme=scheme, gvrsn=event.pvrsn)
+                await _send_witness_message(witness, locations)
+        receipt = modules["eventing"].receipt(
+            pre=hab.pre, sn=event.sn, said=event.said,
+            version=event.pvrsn, kind=event.kind,
+        )
+        msg = modules["eventing"].messagize(
+            serder=receipt, wigers=[receipts[eid] for eid in peers],
+            framed=True, gvrsn=event.pvrsn,
+        )
+        await _send_witness_message(witness, msg)
+
+
+async def _send_witness_message(witness: dict, msg):
+    # The witness POST endpoint accepts one event with attachments in its header.
+    body, attachment = transporting._split_cesr_message(msg)
+    headers = {
+        "Content-Type": transporting.CESR_CONTENT_TYPE,
+        "Content-Length": str(len(body)),
+        transporting.CESR_DESTINATION_HEADER: witness["eid"],
+    }
+    if attachment:
+        headers[transporting.CESR_ATTACHMENT_HEADER] = attachment.decode("utf-8")
+    response = await transporting.fetch_response(
+        witness["witnessUrl"], method="POST", headers=headers,
+        body=body.decode("utf-8"), timeout_ms=_CONFIG["cesr_timeout_ms"],
+    )
+    if int(response.status) >= 400:
+        detail = await transporting.response_text(response)
+        raise vaulting.RuntimeFault(
+            "NETWORK_ERROR",
+            f"Witness {witness['eid']} rejected the receipt propagation: {detail or response.status}",
+        )
+
 
 async def _send_direct_cesr(url: str, msg, *, destination: str = "", method: str = "PUT"):
     await transporting.post_cesr_stream(
@@ -912,6 +960,11 @@ async def _introduce_account_to_watcher(hab, watcher: dict, witnesses: list[dict
     watcher_url = str(watcher.get("watcherUrl", "") or watcher.get("url", "") or "")
     if not watcher_eid or not watcher_url:
         raise vaulting.RuntimeFault("CONFLICT", "Hosted watcher allocation did not include a usable endpoint.")
+
+    for witness in witnesses:
+        locations = hab.loadLocScheme(eid=witness["eid"], gvrsn=hab.kever.serder.pvrsn)
+        if locations:
+            await _send_direct_cesr(watcher_url, locations, destination=watcher_eid)
 
     ender = hab.db.ends.get(keys=(hab.pre, "watcher", watcher_eid))
     if not ender or not ender.allowed:
@@ -938,7 +991,7 @@ async def _introduce_account_to_watcher(hab, watcher: dict, witnesses: list[dict
 
 
 def _local_connection_status(hby, organizer, aid: str):
-    if hby.kevers.get(aid) is not None:
+    if aid in hby.kevers:
         return "Connected", "success"
     if organizer.get(aid) is not None:
         return "Stored", "info"

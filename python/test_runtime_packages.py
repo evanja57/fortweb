@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import importlib.util
 import json
 import sys
@@ -48,6 +50,36 @@ runtime_packages = _load_module()
 
 
 class RuntimePackageUrlTest(unittest.TestCase):
+    def test_manifest_source_identity_follows_the_authenticated_closure(self):
+        manifest = json.loads(CLOSURE_PATH.read_text())
+        base = "https://appassets.androidplatform.net/runtime/"
+        manifest["source_manifest_sha256"] = "a" * 64
+        runtime_packages._validate_manifest(manifest, base + "runtime-closure.json", "0" * 64, base)
+        for value in (None, 1, int("1" * 64), "A" * 64, "a" * 63):
+            with self.subTest(value=value):
+                manifest["source_manifest_sha256"] = value
+                with self.assertRaisesRegex(RuntimeError, "source identity"):
+                    runtime_packages._validate_manifest(manifest, base + "runtime-closure.json", "0" * 64, base)
+
+    def test_modified_closure_is_rejected_before_loading_packages(self):
+        module = _load_module()
+        raw = CLOSURE_PATH.read_bytes()
+        module._package_config = lambda: (
+            "./runtime-closure.json", hashlib.sha256(raw).hexdigest(),
+            "https://appassets.androidplatform.net/runtime/",
+        )
+
+        async def fetch(_url):
+            return raw + b" "
+
+        async def load(_url):
+            self.fail("Unverified closure must not load packages")
+
+        module._fetch_bytes = fetch
+        module._load_package = load
+        with self.assertRaisesRegex(RuntimeError, "manifest SHA-256 mismatch"):
+            asyncio.run(module._load())
+
     def test_accepts_supported_package_bases(self):
         for value in (
             "http://127.0.0.1:4173/fortweb/",

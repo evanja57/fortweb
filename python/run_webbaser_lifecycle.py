@@ -731,6 +731,218 @@ def _check_witness_receipt_ingestion():
         vaulting._CONFIG.update(prior_config)
 
 
+async def _check_witness_receipt_aggregation():
+    onboarding = importlib.import_module("onboarding")
+    kering = importlib.import_module("keri.kering")
+    eventing = importlib.import_module("keri.core.eventing")
+    serdering = importlib.import_module("keri.core.serdering")
+    signing = importlib.import_module("keri.core.signing")
+    _, hby = await _open_habery(f"receipt-aggregation-{uuid4().hex}", clear=True)
+    original_config = dict(vaulting._CONFIG)
+    original_onboarding_config = dict(onboarding._CONFIG)
+    original_fetch = transporting.fetch_response
+    original_response_bytes = transporting.response_bytes
+    original_promote = onboarding._promote_non_witness_receipt
+    original_fallback = onboarding._ingest_witness_receipt_fallback
+
+    def reject_fallback(*args, **kwargs):
+        raise AssertionError("Valid receipts must reach WebBaser through the normal parser")
+
+    async def response_bytes(response):
+        return response.raw
+
+    def indices(hab, said):
+        return [s.index for s in onboarding._get_witness_receipts(hab.db, hab.pre, said)]
+
+    async def check_recipients(hab, event, msg, signers, raw_receipts, encoding):
+        recipients = {}
+        locations = {}
+        rows = []
+        opened = []
+
+        def receive(recipient, raw, *, local=False):
+            recipient.psr.parse(
+                ims=bytearray(raw), local=local,
+                version=transporting._kf_reply_parser_version(raw),
+            )
+            recipient.kvy.processEscrows()
+            recipient.rvy.processEscrowReply()
+
+        def check_state(recipient, label):
+            kever = recipient.kevers.get(hab.pre)
+            _require(kever is not None and kever.serder.said == event.said, f"{label}: account rotation missing")
+            _require(kever.wits == witnesses and kever.toader.num == 3, f"{label}: witness policy changed")
+            wigs = onboarding._get_witness_receipts(recipient.db, hab.pre, event.said)
+            _require(sorted(wig.index for wig in wigs) == [0, 1, 2, 3], f"{label}: peer receipts missing or duplicated")
+            for eid, (serder, url) in locations.items():
+                loc = recipient.db.locs.get(keys=(eid, "http"))
+                said = recipient.db.lans.get(keys=(eid, "http"))
+                _require(loc is not None and loc.url == url, f"{label}: witness endpoint missing")
+                _require(said is not None and said.qb64 == serder.said, f"{label}: original endpoint reply was replaced")
+                cigars = recipient.db.scgs.get(keys=(serder.said,))
+                _require(len(cigars) == 1, f"{label}: signed endpoint proof missing")
+                verfer, cigar = cigars[0]
+                _require(verfer.qb64 == eid and verfer.verify(cigar.raw, serder.raw), f"{label}: endpoint signer changed")
+
+        try:
+            for index, signer in enumerate(signers):
+                _, recipient = await _open_habery(f"{encoding}-witness-{index}-{uuid4().hex}", clear=True)
+                opened.append(recipient)
+                whab = recipient.makeHab(
+                    name=f"witness-{index}", transferable=False,
+                    secrecies=[[signer.qb64]],
+                )
+                _require(whab.pre == witnesses[index], "Recipient witness key does not match allocation")
+                recipients[whab.pre] = recipient
+                url = f"http://localhost:{5700 + index}"
+                rows.append({"eid": whab.pre, "witnessUrl": url, "totpSeed": "JBSWY3DPEHPK3PXP"})
+                location = eventing.reply(
+                    pre=whab.pre, route="/loc/scheme", data=dict(eid=whab.pre, scheme="http", url=url),
+                    version=event.pvrsn, kind=event.kind,
+                )
+                raw = eventing.messagize(
+                    location, cigars=[signer.sign(ser=location.raw, indexed=False)],
+                    gvrsn=event.pvrsn,
+                )
+                receive(hby, raw)
+                receive(recipient, raw)
+                locations[whab.pre] = (location, url)
+                receive(recipient, onboarding._msg_own_inception(hab))
+                receive(recipient, msg, local=True)
+                whab.witness(event, kind=event.kind, version=event.pvrsn, gvrsn=event.pvrsn)
+                wigs = onboarding._get_witness_receipts(recipient.db, hab.pre, event.said)
+                _require([wig.index for wig in wigs] == [index], "Witness fixture must start with only its own receipt")
+                _require(sum(recipient.db.locs.get(keys=(eid, "http")) is not None for eid in witnesses) == 1,
+                         "Witness fixture must start without peer endpoints")
+
+            _, watcher = await _open_habery(f"{encoding}-watcher-{uuid4().hex}", clear=True)
+            opened.append(watcher)
+            watcher_hab = watcher.makeHab(name="watcher", transferable=False, algo="randy")
+            watcher_row = {"eid": watcher_hab.pre, "watcherUrl": "http://localhost:5704"}
+            recipients[watcher_hab.pre] = watcher
+
+            async def fetch(url, *, method="GET", headers=None, body=None, **kwargs):
+                destination = headers[transporting.CESR_DESTINATION_HEADER]
+                recipient = recipients[destination]
+                raw = body.encode("utf-8")
+                attachment = headers.get(transporting.CESR_ATTACHMENT_HEADER, "")
+                if destination in witnesses:
+                    if method == "PUT":
+                        return SimpleNamespace(status=204, raw=b"")
+                    _require(method == "POST", "Witness transport requires POST")
+                    _require(json.loads(raw)["t"] in {"rot", "rct", "rpy"}, "Witness POST body must be one event")
+                    receive(recipient, raw + attachment.encode("utf-8"), local=url.endswith("/receipts"))
+                    if url.endswith("/receipts"):
+                        response = raw_receipts[witnesses.index(destination)]
+                        return SimpleNamespace(status=200, raw=response)
+                    return SimpleNamespace(status=204, raw=b"")
+                _require(method == "PUT", "Watcher transport requires PUT")
+                receive(recipient, raw)
+                return SimpleNamespace(status=204, raw=b"")
+
+            transporting.fetch_response = fetch
+            await onboarding._rotate_kf_account_to_witnesses(hab, rows, toad=3)
+            for eid in witnesses:
+                check_state(recipients[eid], f"{encoding} witness {eid}")
+            await onboarding._introduce_account_to_watcher(hab, watcher_row, rows)
+            check_state(watcher, f"{encoding} watcher")
+            observed = watcher.db.obvs.get(keys=(hab.pre, watcher_hab.pre, hab.pre))
+            _require(observed is not None and observed.enabled, "Watcher did not accept the watch request")
+        finally:
+            for recipient in reversed(opened):
+                await vaulting.close_habery(recipient, clear=True)
+
+    try:
+        vaulting._CONFIG["load_modules"] = lambda: {
+            "kering": kering, "eventing": eventing, "serdering": serdering,
+        }
+        onboarding._CONFIG["witness_registration_timeout_ms"] = 1000
+        onboarding._CONFIG["cesr_timeout_ms"] = 1000
+        transporting.response_bytes = response_bytes
+        onboarding._promote_non_witness_receipt = reject_fallback
+        onboarding._ingest_witness_receipt_fallback = reject_fallback
+        signers = [
+            signing.Signer(
+                raw=hashlib.sha256(f"receipt-witness-{i}".encode()).digest(),
+                transferable=False,
+            )
+            for i in range(4)
+        ]
+        witnesses = [signer.verfer.qb64 for signer in signers]
+
+        for encoding in ("modern", "legacy", "mixed"):
+            raw_receipts = {}
+            hab = onboarding._create_or_load_kf_account_hab(
+                hby, onboarding.KfVaultState(), alias=encoding, requested_account_aid="",
+            )
+            msg = bytes(hab.rotate(adds=witnesses, toad=3))
+            event = hab.kever.serder
+            _require(hab.psr.kvy.fetchWitnessState(hab.pre, 0) == [], "Inception gained later witnesses")
+            _require(
+                [wit.qb64 for wit in hab.psr.kvy.fetchWitnessState(hab.pre, 1)] == witnesses,
+                "Rotation witness state does not match the allocated pool",
+            )
+
+            async def submit(index, *, valid=True):
+                pvrsn = kering.Vrsn_1_0 if encoding == "legacy" else kering.Vrsn_2_0
+                receipt = eventing.receipt(
+                    pre=hab.pre, sn=event.sn, said=event.said,
+                    version=pvrsn, kind=kering.Kinds.json,
+                )
+                signer = signers[index]
+                cigar = signer.sign(ser=event.raw if valid else event.raw + b"invalid", indexed=False)
+                if encoding == "mixed":
+                    inner = (
+                        eventing.Counter.makeGVC(version=kering.Vrsn_1_0)
+                        + eventing.Counter(eventing.Codens.NonTransReceiptCouples, count=1, version=kering.Vrsn_1_0).qb64b
+                        + signer.verfer.qb64b + cigar.qb64b
+                    )
+                    raw = receipt.raw + eventing.Counter.enclose(
+                        qb64=inner, code=eventing.Codens.AttachmentGroup, version=kering.Vrsn_2_0,
+                    )
+                else:
+                    raw = bytes(eventing.messagize(receipt, cigars=[cigar], gvrsn=pvrsn))
+
+                if valid:
+                    raw_receipts[index] = raw
+
+                async def fetch(*args, **kwargs):
+                    return SimpleNamespace(status=200, raw=raw)
+
+                transporting.fetch_response = fetch
+                await onboarding._submit_witness_rotation_receipt(
+                    hab, {"eid": witnesses[index], "witnessUrl": "http://localhost:5632"}, "test", msg,
+                )
+
+            for index in range(3):
+                await submit(index)
+                _require(indices(hab, event.said) == list(range(index + 1)), f"{encoding}: witness {index} receipt missing")
+            _require(len(indices(hab, event.said)) >= hab.kever.toader.num, f"{encoding}: receipts below TOAD")
+            await submit(3, valid=False)
+            _require(indices(hab, event.said) == [0, 1, 2], f"{encoding}: invalid signature was counted")
+            await submit(3)
+            _require(indices(hab, event.said) == [0, 1, 2, 3], f"{encoding}: fourth receipt missing")
+            await submit(3)
+            _require(indices(hab, event.said) == [0, 1, 2, 3], f"{encoding}: repeated receipt was counted twice")
+            if encoding == "modern":
+                await check_recipients(hab, event, msg, signers, raw_receipts, encoding)
+            hab.interact()
+            _require(
+                [wit.qb64 for wit in hab.psr.kvy.fetchWitnessState(hab.pre, 2)] == witnesses,
+                f"{encoding}: interaction did not inherit establishment witnesses",
+            )
+    finally:
+        vaulting._CONFIG.clear()
+        vaulting._CONFIG.update(original_config)
+        onboarding._CONFIG.clear()
+        onboarding._CONFIG.update(original_onboarding_config)
+        transporting.fetch_response = original_fetch
+        transporting.response_bytes = original_response_bytes
+        onboarding._promote_non_witness_receipt = original_promote
+        onboarding._ingest_witness_receipt_fallback = original_fallback
+        await vaulting.close_habery(hby, clear=True)
+
+
 async def _await_oobi(hby, oobiery, url):
     oobiing = importlib.import_module("keri.app.oobiing")
     loop = asyncio.get_running_loop()
@@ -751,9 +963,15 @@ def _check_oobi(hby, fixture, phase, *, require_kever=True):
     record = hby.db.roobi.get(keys=(fixture["url"],))
     _require(record is not None and record.state == oobiing.Result.resolved, f"{phase}: resolved OOBI missing")
     _require(record.cid == fixture["remote_pre"], f"{phase}: OOBI cid mismatch")
+    organizer = organizing.Organizer(hby=hby)
+    remote = vaulting._remote_detail_record(hby, organizer, fixture["remote_pre"])
+    _require(remote["status"] == "Resolved", f"{phase}: persisted remote shown as unresolved")
+    _require(remote["sequenceNumber"] == fixture["sn"], f"{phase}: remote sequence changed")
+    _require(remote["transferable"] == fixture["transferable"], f"{phase}: remote transferability changed")
+    _require(remote["lastEventDigest"] == fixture["digest"], f"{phase}: remote event digest changed")
     if require_kever:
         _require(fixture["remote_pre"] in hby.kevers, f"{phase}: remote Kever missing")
-    contact = organizing.Organizer(hby=hby).get(fixture["remote_pre"])
+    contact = organizer.get(fixture["remote_pre"])
     _require(contact is not None, f"{phase}: organizer contact missing")
     for field in ("alias", "oobi", "company", "org", "note"):
         _require(contact.get(field) == fixture[field], f"{phase}: organizer {field} mismatch")
@@ -765,15 +983,25 @@ async def _oobi_create(name):
     recording = importlib.import_module("keri.recording")
     _, hby = await _open_habery(name, clear=True)
     alias = f"{name}-remote"
-    url = f"{_origin()}/oobi/{OOBI_AID}/controller?name={alias}"
+    original_config = dict(vaulting._CONFIG)
+    vaulting._CONFIG["load_modules"] = lambda: {"oobiing": oobiing}
+    try:
+        url = vaulting.require_oobi_url(f"{_origin()}/oobi/{OOBI_AID}/controller?name={alias}")
+    finally:
+        vaulting._CONFIG.clear()
+        vaulting._CONFIG.update(original_config)
     record = recording.OobiRecord(date=oobiing.nowIso8601(), oobialias=alias)
     hby.db.oobis.pin(keys=(url,), val=record)
     oobiery = oobiing.Oobiery(hby=hby, clienter=transporting.BrowserClienter())
     resolved = await _await_oobi(hby, oobiery, url)
+    kever = hby.kevers[resolved.cid]
     fixture = {
         "name": name,
         "url": url,
         "remote_pre": resolved.cid,
+        "sn": kever.sn,
+        "transferable": kever.transferable,
+        "digest": kever.serder.said,
         "alias": alias,
         "oobi": url,
         "company": CONTACT_COMPANY,
@@ -807,6 +1035,7 @@ async def _oobi_absent(fixture):
 async def _create(names):
     await _check_partial_close_retry()
     _check_witness_receipt_ingestion()
+    await _check_witness_receipt_aggregation()
     fixtures = {
         "webdber": await _webdber_create(names["webdber"]),
         "webbaser": await _webbaser_create(names["webbaser"]),
@@ -825,6 +1054,7 @@ async def _create(names):
             "browserclienter-http-oobi",
             "aggregate-close-partial-failure-retry",
             "mixed-version-witness-receipt-ingestion",
+            "multi-witness-receipts-from-parser",
             "nested-v2-exn-stored-from-parser",
         ],
     }

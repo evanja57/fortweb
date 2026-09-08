@@ -16,7 +16,6 @@ from urllib.parse import urlsplit
 
 
 REPO = Path(__file__).resolve().parent.parent
-EXPECTED_MANIFEST_SHA256 = "697d54f0028a526357f017010a6a5104dfb7e53c99a7c3769437dd9af64ec93c"
 SHA256_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
 MAX_ARCHIVE_BYTES = 64 * 1024 * 1024
 MAX_ARCHIVE_MEMBERS = 256
@@ -85,11 +84,12 @@ def safe_extract(archive: Path, destination: Path) -> None:
         bundle.extractall(root, members=members, filter="data")
 
 
-def verify_source_tree(root: Path) -> Path:
+def verify_source_tree(root: Path, manifest_sha256: str) -> Path:
+    require_sha256(manifest_sha256, "runtime source manifest identity")
     manifest_path = root / "manifest.json"
     if not manifest_path.is_file() or manifest_path.is_symlink():
         raise AcquisitionError("runtime source archive is missing manifest.json")
-    if sha256(manifest_path) != EXPECTED_MANIFEST_SHA256:
+    if sha256(manifest_path) != manifest_sha256:
         raise AcquisitionError("runtime source manifest SHA-256 mismatch")
 
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -107,7 +107,12 @@ def verify_source_tree(root: Path) -> Path:
     file_rows = {row.get("path"): row for row in rows if isinstance(row, dict)}
     required_paths = [f"runtime/{name}" for name in core_files]
     required_paths.extend(f"wheelhouse/{row.get('filename')}" for row in wheels)
+    if len(file_rows) != len(rows) or len(set(required_paths)) != len(required_paths):
+        raise AcquisitionError("runtime source manifest contains duplicate paths")
     for relative in required_paths:
+        if ("\\" in relative or "%" in relative or relative.startswith("/")
+                or any(part in {"", ".", ".."} for part in relative.split("/"))):
+            raise AcquisitionError(f"unsafe runtime source path: {relative}")
         row = file_rows.get(relative)
         target = root / relative
         if (
@@ -132,7 +137,7 @@ def verify_source_tree(root: Path) -> Path:
     return manifest_path
 
 
-def acquire(url: str, archive_sha256: str, output: Path) -> Path:
+def acquire(url: str, archive_sha256: str, output: Path, manifest_sha256: str | None = None) -> Path:
     require_https_url(url)
     expected_archive_sha256 = require_sha256(archive_sha256, "runtime source archive identity")
     output = output.resolve()
@@ -144,6 +149,7 @@ def acquire(url: str, archive_sha256: str, output: Path) -> Path:
         raise AcquisitionError("runtime source output must remain inside the repository") from error
     if output.exists():
         raise AcquisitionError(f"runtime source output already exists: {output}")
+    manifest_sha256 = require_sha256(manifest_sha256 or os.environ.get("FORTWEB_RUNTIME_SOURCE_MANIFEST_SHA256", ""), "runtime source manifest identity")
     output.parent.mkdir(parents=True, exist_ok=True)
 
     with tempfile.TemporaryDirectory(prefix=".runtime-source-", dir=output.parent) as temporary:
@@ -165,7 +171,7 @@ def acquire(url: str, archive_sha256: str, output: Path) -> Path:
 
         extracted = temporary_root / "payload"
         safe_extract(archive, extracted)
-        manifest_path = verify_source_tree(extracted)
+        manifest_path = verify_source_tree(extracted, manifest_sha256)
         os.rename(extracted, output)
         return output / manifest_path.relative_to(extracted)
 
@@ -175,9 +181,10 @@ def main() -> int:
     parser.add_argument("--url", required=True)
     parser.add_argument("--sha256", required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--manifest-sha256", default=os.environ.get("FORTWEB_RUNTIME_SOURCE_MANIFEST_SHA256", ""))
     args = parser.parse_args()
     try:
-        manifest = acquire(args.url, args.sha256, args.output)
+        manifest = acquire(args.url, args.sha256, args.output, args.manifest_sha256)
     except (AcquisitionError, OSError, tarfile.TarError, ValueError, json.JSONDecodeError) as error:
         parser.error(str(error))
     print(manifest.relative_to(REPO))
