@@ -387,6 +387,7 @@ def main() -> int:
         if args.runtime_dir.is_symlink():
             parser.error("--runtime-dir must be a real directory")
         doc_root = args.runtime_dir.resolve()
+        args.runtime_dir = doc_root
         for relative in ("app/index.html", "pyscript-ci.toml", "runtime-closure.json"):
             if not (doc_root / relative).is_file():
                 parser.error(f"runtime is missing {relative}")

@@ -99,6 +99,10 @@ test.describe('FortWeb smoke', () => {
             };
         });
 
+        const runtimeConfig = await page.request.get('/fortweb/pyscript-ci.toml');
+        expect(runtimeConfig.status()).toBe(200);
+        expect(await runtimeConfig.text()).toMatch(/^sha256\s*=\s*"[0-9a-f]{64}"$/m);
+
         await page.goto('/fortweb/app/index.html');
 
         await expect(page.locator('#app-root')).toBeAttached();

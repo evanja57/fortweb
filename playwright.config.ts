@@ -10,7 +10,7 @@ export default defineConfig({
     retries: process.env['CI'] ? 1 : 0,
     reporter: process.env['CI'] ? 'github' : 'list',
     webServer: {
-        command: 'python3 scripts/serve_local.py --no-open --port 4173',
+        command: 'python3 scripts/serve_local.py --runtime-dir dist/runtime --no-open --port 4173',
         url: 'http://127.0.0.1:4173/fortweb/app/',
         reuseExistingServer: !process.env['CI'],
         timeout: 60_000,
