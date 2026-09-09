@@ -70,7 +70,7 @@ jobs:
             --output build/runtime-source
 
       - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install --only-shell chromium
 
       - name: Install verified Python build tools
         run: |
