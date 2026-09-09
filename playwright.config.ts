@@ -5,6 +5,7 @@ process.env['FORTWEB_BASE_URL'] ??= applicationBaseURL;
 
 export default defineConfig({
     testDir: './playwright',
+    outputDir: 'test-results/application',
     fullyParallel: false,
     workers: process.env['CI'] ? 1 : undefined,
     retries: process.env['CI'] ? 1 : 0,
