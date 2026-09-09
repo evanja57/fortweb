@@ -32,10 +32,11 @@ jobs:
     name: FortWeb Runtime and Playwright
     runs-on: ubuntu-latest
     env:
-      FORTWEB_RUNTIME_SOURCE_URL: ${{ inputs.runtime_source_url || vars.FORTWEB_RUNTIME_SOURCE_URL }}
-      FORTWEB_RUNTIME_SOURCE_ARCHIVE_SHA256: ${{ inputs.runtime_source_archive_sha256 || vars.FORTWEB_RUNTIME_SOURCE_ARCHIVE_SHA256 }}
+      # Keep public build inputs in Git so fork PRs can use the same runtime.
+      FORTWEB_RUNTIME_SOURCE_URL: ${{ inputs.runtime_source_url || 'https://github.com/keri-foundation/fortweb/releases/download/runtime-source-pyodide-314-20260909/runtime-source.tar.gz' }}
+      FORTWEB_RUNTIME_SOURCE_ARCHIVE_SHA256: ${{ inputs.runtime_source_archive_sha256 || 'e04833249eec88596e0f2f88d32baa6d5fae6b2e964996587061ddac4bd78c72' }}
       FORTWEB_RUNTIME_SOURCE_MANIFEST: build/runtime-source/manifest.json
-      FORTWEB_RUNTIME_SOURCE_MANIFEST_SHA256: ${{ inputs.runtime_source_manifest_sha256 || vars.FORTWEB_RUNTIME_SOURCE_MANIFEST_SHA256 }}
+      FORTWEB_RUNTIME_SOURCE_MANIFEST_SHA256: ${{ inputs.runtime_source_manifest_sha256 || '87bcc689d7778840a76284471ff599cef21be41df2b429724f7f4fdc5f022135' }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

@@ -76,7 +76,10 @@ promoting a changed wheel.
 ## Acquire, build, and verify
 
 For a published runtime-source archive, supply both archive and manifest
-identities. CI requires these values and fails if they are missing.
+identities. The CI workflow pins the public URL and both digests in Git so
+fork PRs can use the same input. Update all three values together when the
+runtime source changes. Manual workflow runs can supply a different URL and
+both matching digests.
 
 ```bash
 python3 scripts/acquire_runtime_source.py \
