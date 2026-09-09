@@ -82,6 +82,9 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Build runtime
+        run: npm run build:runtime
+
       - name: Test source contracts
         run: |
           node --test \
@@ -97,9 +100,6 @@ jobs:
             python/test_transporting.py \
             python/test_onboarding.py \
             python/test_vaulting.py
-
-      - name: Build runtime
-        run: npm run build:runtime
 
       - name: Check runtime JS
         run: npm run check:runtime-js
