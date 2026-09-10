@@ -87,6 +87,17 @@ test('provenance rejects malformed toolchain identities', () => {
     }
 });
 
+test('Keripy provenance accepts an absent metadata patch and validates older patch digests', () => {
+    const candidate = provenance();
+    assert.equal(validateProvenance(candidate), candidate);
+    candidate.packages.keripy.metadata_patch_sha256 = 'bad';
+    assert.throws(() => validateProvenance(candidate), /metadata_patch_sha256/);
+    delete candidate.packages.keripy.metadata_patch_sha256;
+    assert.equal(validateProvenance(candidate), candidate);
+    candidate.packages.keripy.unexpected = digest;
+    assert.throws(() => validateProvenance(candidate), /Provenance package keripy/);
+});
+
 async function writeNew(filename, data) {
     const handle = await open(filename, 'wx', 0o644);
     try { await handle.writeFile(data); } finally { await handle.close(); }

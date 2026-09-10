@@ -21,12 +21,12 @@ The eventual pull request description must retain this attribution and the no-ch
 ## Current producer inputs
 
 The public producer captures FortWeb's current source, including working
-changes. For this PR, use normal HIO commit
-`7b0350eab3115f42cd6be5dee2b203d052a320aa` and Keripy webbaser commit
-`3d504ba4f9ce52cab0bc95bbf65642be7bf29614`.
-The Keripy dependency patch selects HIO 0.7.20 while its upstream package
-release is pending. The compiled baseline remains the accepted Pyodide 314
-wheelhouse. See the build document for the input format and commands.
+changes. Use the published HIO 0.7.20 source archive, whose release tag points
+to commit `92cd92e3c7dbf34577c2128c68eec75669ff833f`, and Keripy webbaser commit
+`8ec740aec6dd349471056fea909828fbb6c3ea1b` with its direct `hio==0.7.20`
+dependency. Both source inputs build without a patch. The compiled baseline remains the
+accepted Pyodide 314 wheelhouse. See the build document for the input format
+and commands.
 
 `tools/package-runtime.mjs` verifies current source and runtime bytes before it
 produces the ZIP, sidecar, and release metadata. A source, runtime, wheel,

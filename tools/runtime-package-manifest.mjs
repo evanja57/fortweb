@@ -206,7 +206,7 @@ export function validateManifest(manifest) {
 
 const PACKAGE_KEYS = {
     hio: ['commit', 'version', 'wheel_filename', 'wheel_sha256'],
-    keripy: ['commit', 'metadata_patch_sha256', 'version', 'wheel_filename', 'wheel_sha256'],
+    keripy: ['commit', 'version', 'wheel_filename', 'wheel_sha256'],
     msgpack: ['source_sha256', 'version', 'wheel_filename', 'wheel_sha256'],
     cbor2: ['cargo_acquisition_sha256', 'cargo_lock_sha256', 'source_sha256', 'version', 'wheel_filename', 'wheel_sha256'],
     blake3: ['cargo_acquisition_sha256', 'final_cargo_lock_sha256', 'lock_patch_sha256', 'original_cargo_lock_sha256', 'source_patch_sha256', 'source_sha256', 'version', 'wheel_filename', 'wheel_sha256'],
@@ -255,7 +255,10 @@ export function validateProvenance(provenance) {
     }
     requireExactKeys(provenance.packages, Object.keys(PACKAGE_KEYS), 'Provenance packages');
     for (const [name, keys] of Object.entries(PACKAGE_KEYS)) {
-        requireExactKeys(provenance.packages[name], keys, `Provenance package ${name}`);
+        const expectedKeys = name === 'keripy' && Object.hasOwn(provenance.packages[name], 'metadata_patch_sha256')
+            ? [...keys, 'metadata_patch_sha256']
+            : keys;
+        requireExactKeys(provenance.packages[name], expectedKeys, `Provenance package ${name}`);
         for (const [key, value] of Object.entries(provenance.packages[name])) {
             if (key.endsWith('_sha256')) requireDigest(value, `Provenance package ${name} ${key}`);
             if (key === 'commit' || key === 'source_commit') requireCommit(value, `Provenance package ${name} ${key}`);

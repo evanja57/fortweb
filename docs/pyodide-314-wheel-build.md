@@ -25,9 +25,20 @@ checks byte equality and wheel RECORD entries, and composes a new runtime
 source. Every source archive and patch must have an explicit SHA-256 digest.
 Archive and patch paths are relative to the source declaration file.
 
-Create archives with `git archive --format=tar <commit>`. Each archive must
-have setup.py at its root. Record working changes as a separate binary Git
-diff. A declaration has this shape (replace every digest with its actual value):
+Use the [published HIO 0.7.20 source archive](https://files.pythonhosted.org/packages/ce/71/1abecf7fcc42bf84c81b35ca9cfcee84f63b81b72bd0115577ebc18d31cb/hio-0.7.20.tar.gz).
+Its SHA-256 is `f88bd74fa5d680697f24b565cdfbc543224607222720687e2fc0d2cd67ccd70f`.
+The `v0.7.20` tag points to commit `92cd92e3c7dbf34577c2128c68eec75669ff833f`.
+
+Create the Keripy archive with `git archive --format=tar <commit>`, using
+`8ec740aec6dd349471056fea909828fbb6c3ea1b`, which pins `hio==0.7.20` in setup.py.
+Archives can have setup.py at the
+root or inside one top-level directory, as in a published source distribution.
+Record working changes as a separate binary Git diff. The producer records
+each applied patch in the wheel's `origin.patches` list. It does not require
+a HIO metadata patch. Older package manifests can retain their recorded
+`metadata_patch_sha256`; new builds omit that field.
+
+A declaration for these committed sources is:
 
 ```json
 {
@@ -36,20 +47,18 @@ diff. A declaration has this shape (replace every digest with its actual value):
     {
       "distribution": "hio",
       "repository": "https://github.com/ioflo/hio",
-      "commit": "7b0350eab3115f42cd6be5dee2b203d052a320aa",
-      "archive": "hio.tar",
-      "sha256": "<archive-sha256>",
+      "commit": "92cd92e3c7dbf34577c2128c68eec75669ff833f",
+      "archive": "hio-0.7.20.tar.gz",
+      "sha256": "f88bd74fa5d680697f24b565cdfbc543224607222720687e2fc0d2cd67ccd70f",
       "patches": []
     },
     {
       "distribution": "keri",
       "repository": "https://github.com/evanja57/keripy",
-      "commit": "3d504ba4f9ce52cab0bc95bbf65642be7bf29614",
+      "commit": "8ec740aec6dd349471056fea909828fbb6c3ea1b",
       "archive": "keri.tar",
-      "sha256": "<archive-sha256>",
-      "patches": [
-        {"path": "keripy-hio-0.7.20.patch", "sha256": "35530bb3bc863f6f958c0583363769ca748ee5e8b9db1733ae7d5bb464f9a51c"}
-      ]
+      "sha256": "65902f2d73b16fb4287d8a6e1d81fd4adf564c382181dafbaa9954642e59bea6",
+      "patches": []
     }
   ]
 }

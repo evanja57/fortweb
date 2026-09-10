@@ -64,7 +64,7 @@ def read_document(path: Path, expected: str) -> dict:
     return json.loads(read_input(path.parent, path.name, expected))
 
 
-def extract_source(data: bytes, destination: Path) -> None:
+def extract_source(data: bytes, destination: Path) -> Path:
     destination.mkdir()
     with tarfile.open(fileobj=io.BytesIO(data), mode="r:*") as archive:
         members = archive.getmembers()
@@ -89,8 +89,13 @@ def extract_source(data: bytes, destination: Path) -> None:
             archive.extractall(destination, members=members, filter="data")
         except tarfile.FilterError as error:
             raise ValueError(f"unsafe source archive: {error}") from error
-    if not (destination / "setup.py").is_file():
-        raise ValueError("source archive must put setup.py at its root")
+    if (destination / "setup.py").is_file():
+        return destination
+    children = list(destination.iterdir())
+    if (len(children) == 1 and children[0].is_dir() and not children[0].is_symlink()
+            and (children[0] / "setup.py").is_file()):
+        return children[0]
+    raise ValueError("source archive must contain setup.py at its root or in one top-level directory")
 
 
 def inspect_wheel(filename: str, data: bytes, distribution: str) -> dict:
@@ -148,8 +153,7 @@ def build_wheel(spec: dict, source_root: Path, scratch: Path) -> tuple[dict, byt
     patches = [(row, read_input(source_root, row["path"], row["sha256"])) for row in spec.get("patches", [])]
     wheels = []
     for index in range(2):
-        root = scratch / f"{distribution}-{index + 1}"
-        extract_source(archive, root)
+        root = extract_source(archive, scratch / f"{distribution}-{index + 1}")
         patch_environment = dict(os.environ, GIT_CEILING_DIRECTORIES=str(scratch.resolve()))
         for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE"):
             patch_environment.pop(name, None)
@@ -242,10 +246,7 @@ def compose(args: argparse.Namespace) -> Path:
             package.update(commit=row["origin"]["commit"], version=row["version"],
                            wheel_filename=row["filename"], wheel_sha256=row["sha256"])
             if name == "keri":
-                metadata_patches = [patch for patch in row["origin"]["patches"] if "hio" in Path(patch["path"]).name]
-                if len(metadata_patches) != 1:
-                    raise ValueError("Keripy build must declare the HIO metadata patch")
-                package["metadata_patch_sha256"] = metadata_patches[0]["sha256"]
+                package.pop("metadata_patch_sha256", None)
         for key, package in provenance["packages"].items():
             if "wheel_filename" not in package:
                 continue
