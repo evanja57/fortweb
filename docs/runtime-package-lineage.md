@@ -30,8 +30,9 @@ and commands.
 
 `tools/package-runtime.mjs` verifies current source and runtime bytes before it
 produces the ZIP, sidecar, and release metadata. A source, runtime, wheel,
-harness, or package change requires fresh products and evidence. Publication
-still needs an immutable acquisition location and the required CI inputs.
+harness, or package change requires fresh products and evidence. The
+[runtime source archive](https://github.com/keri-foundation/fortweb/releases/tag/runtime-source-pyodide-314-hio-0.7.20-20260910)
+is published. CI pins its URL and both archive and manifest digests.
 
 ## Mobile consumer handoff
 

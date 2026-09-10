@@ -33,10 +33,10 @@ jobs:
     runs-on: ubuntu-latest
     env:
       # Keep public build inputs in Git so fork PRs can use the same runtime.
-      FORTWEB_RUNTIME_SOURCE_URL: ${{ inputs.runtime_source_url || 'https://github.com/keri-foundation/fortweb/releases/download/runtime-source-pyodide-314-20260909/runtime-source.tar.gz' }}
-      FORTWEB_RUNTIME_SOURCE_ARCHIVE_SHA256: ${{ inputs.runtime_source_archive_sha256 || 'e04833249eec88596e0f2f88d32baa6d5fae6b2e964996587061ddac4bd78c72' }}
+      FORTWEB_RUNTIME_SOURCE_URL: ${{ inputs.runtime_source_url || 'https://github.com/keri-foundation/fortweb/releases/download/runtime-source-pyodide-314-hio-0.7.20-20260910/runtime-source.tar.gz' }}
+      FORTWEB_RUNTIME_SOURCE_ARCHIVE_SHA256: ${{ inputs.runtime_source_archive_sha256 || '394db70ecbed6e5718e6ec0afbcb43eaf6384e2ab78218e55067ec9e5d83fb34' }}
       FORTWEB_RUNTIME_SOURCE_MANIFEST: build/runtime-source/manifest.json
-      FORTWEB_RUNTIME_SOURCE_MANIFEST_SHA256: ${{ inputs.runtime_source_manifest_sha256 || '87bcc689d7778840a76284471ff599cef21be41df2b429724f7f4fdc5f022135' }}
+      FORTWEB_RUNTIME_SOURCE_MANIFEST_SHA256: ${{ inputs.runtime_source_manifest_sha256 || '371ef8cb8c6641b68afe6799931678435e2a629dcf4aa7ba2e344efab5a10f32' }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
