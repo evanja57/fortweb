@@ -5,12 +5,22 @@ import { existsSync, lstatSync, readFileSync, readdirSync, renameSync, rmSync, w
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { ZIP_BASENAME } from './runtime-package-manifest.mjs';
 
 const PROJECT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const BUILDER = path.join(PROJECT_DIR, 'tools/build-runtime.mjs');
 const SCRATCH = path.join(PROJECT_DIR, 'dist/.runtime-builds');
 const BUILD_1 = path.join(SCRATCH, `idempotency-a-${process.pid}`);
 const BUILD_2 = path.join(SCRATCH, `idempotency-b-${process.pid}`);
+const PACKAGE_1 = path.join(SCRATCH, `idempotency-package-a-${process.pid}`);
+const PACKAGE_2 = path.join(SCRATCH, `idempotency-package-b-${process.pid}`);
+
+function runPackager(runtime, output) {
+    const args = [path.join(PROJECT_DIR, 'tools/package-runtime.mjs'),
+        '--runtime-dir', runtime, '--output-dir', output];
+    if (process.env.PACKAGE_REF) args.push('--ref', process.env.PACKAGE_REF);
+    return spawnSync(process.execPath, args, { cwd: PROJECT_DIR, encoding: 'utf8' });
+}
 
 function runBuilder(target, fault = '', operationFault = '') {
     return spawnSync(process.execPath, [BUILDER, '--out-dir', path.relative(PROJECT_DIR, target)], {
@@ -69,16 +79,30 @@ function removeTarget(target) {
 after(() => {
     removeTarget(BUILD_1);
     removeTarget(BUILD_2);
+    removeTarget(PACKAGE_1);
+    removeTarget(PACKAGE_2);
 });
 
-test('two clean builds are path-and-byte identical', () => {
+test('two clean runtime builds and all three verified package products are byte identical', () => {
     removeTarget(BUILD_1);
     removeTarget(BUILD_2);
+    removeTarget(PACKAGE_1);
+    removeTarget(PACKAGE_2);
     const first = runBuilder(BUILD_1);
-    const second = runBuilder(BUILD_2);
     assert.equal(first.status, 0, first.stderr);
+    const firstPackage = runPackager(BUILD_1, PACKAGE_1);
+    assert.equal(firstPackage.status, 0, firstPackage.stderr);
+    const second = runBuilder(BUILD_2);
     assert.equal(second.status, 0, second.stderr);
+    const secondPackage = runPackager(BUILD_2, PACKAGE_2);
+    assert.equal(secondPackage.status, 0, secondPackage.stderr);
     assert.deepEqual(snapshot(BUILD_1), snapshot(BUILD_2));
+    const products = [ZIP_BASENAME, `${ZIP_BASENAME}.sha256`, 'fortweb-release.json'].sort();
+    assert.deepEqual(readdirSync(PACKAGE_1).sort(), products);
+    assert.deepEqual(readdirSync(PACKAGE_2).sort(), products);
+    for (const name of products) {
+        assert(readFileSync(path.join(PACKAGE_1, name)).equals(readFileSync(path.join(PACKAGE_2, name))), name);
+    }
 });
 
 test('rebuild removes stale and changed output bytes', () => {

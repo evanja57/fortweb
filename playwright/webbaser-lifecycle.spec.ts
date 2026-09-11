@@ -218,7 +218,7 @@ function writeEvidence(filename: string, payload: Record<string, unknown>): void
     writeFileSync(path.join(FORTWEB_ARTIFACT_DIR, filename), JSON.stringify({
         schema: 1,
         command_identity: "playwright:runtime-focused-webbaser",
-        test_count: 4,
+        test_count: 5,
         run_id: FORTWEB_RUN_ID,
         source_identity_sha256: FORTWEB_SOURCE_IDENTITY_SHA256,
         ...payload,
@@ -591,6 +591,88 @@ test("@smoke WebBaser persists and clears WebBaser state across explicit PyWorke
         }, null, 2),
         contentType: "application/json",
     });
+});
+
+test("@smoke bundled wallet allows HTTPS service data and rejects cleartext and redirects", async ({ page, baseURL }) => {
+    test.setTimeout(360_000);
+    const serviceOrigin = "https://wallet-service.example.test";
+    const redirectOrigin = "https://redirect.example.test";
+    const downgradeUrl = new URL("/oobi?name=redirect-must-not-follow", baseURL).href;
+    const observedRequests: string[] = [];
+    const externalRequests: string[] = [];
+    const allowedRequests = [`${serviceOrigin}/bootstrap/config`, `${redirectOrigin}/bootstrap/config`];
+    page.on("request", (request) => {
+        observedRequests.push(request.url());
+        if (new URL(request.url()).origin !== new URL(baseURL!).origin) externalRequests.push(request.url());
+    });
+    await page.route("**/*", async (route) => {
+        const request = route.request();
+        const url = request.url();
+        if (new URL(url).origin === new URL(baseURL!).origin) {
+            await route.continue();
+            return;
+        }
+        if (url === allowedRequests[0]) {
+            await route.fulfill({
+                contentType: "application/json",
+                headers: { "Access-Control-Allow-Origin": "*" },
+                body: JSON.stringify({ region: { id: "https-fixture" }, bootstrap: {} }),
+            });
+        } else if (url === allowedRequests[1]) {
+            await route.fulfill({
+                status: 302,
+                headers: { "Location": downgradeUrl, "Access-Control-Allow-Origin": "*" },
+                body: "",
+            });
+        } else {
+            await route.abort();
+        }
+    });
+    const fixtureUrl = new URL(PRODUCTION_HARNESS_PATH, baseURL);
+    fixtureUrl.searchParams.set("walletServiceProduction", "1");
+    const started = page.waitForEvent("worker", { timeout: PHASE_TIMEOUT_MS });
+    expect((await page.goto(fixtureUrl.href))?.ok()).toBe(true);
+    await page.waitForFunction(() => (
+        window as typeof window & { webbaserProductionHarnessReady?: boolean }
+    ).webbaserProductionHarnessReady === true);
+    const worker = await started;
+    const request = (method: string, params: Record<string, unknown> = {}) => page.evaluate(
+        async ({ method, params }) => (
+            window as typeof window & { webbaserProductionHarness: ProductionHarness }
+        ).webbaserProductionHarness.request(method, params), { method, params },
+    );
+    try {
+        const created = await request("vaults.create", { name: uniqueName("https-policy"), passcode: "" });
+        const vaultId = String((created.vault as Record<string, unknown>).id);
+        await request("vaults.open", { vaultId, passcode: "" });
+        // Startup and local recovery must not acquire remote runtime content.
+        await request("vaults.close", { vaultId });
+        await request("vaults.open", { vaultId, passcode: "" });
+        expect(externalRequests).toEqual([]);
+        const bootstrap = (origin: string) => request("kf.bootstrap.get", {
+            vaultId,
+            surfaceConfig: { onboardingUrl: `${origin}/onboarding`, accountUrl: `${origin}/account` },
+        });
+        const https = await bootstrap(serviceOrigin);
+        expect(https.connection).toEqual({ ok: true });
+        expect(https.bootstrap).toEqual(expect.objectContaining({ regionId: "https-fixture" }));
+        for (const origin of ["http://wallet-service.example.test", new URL(baseURL!).origin]) {
+            const cleartext = await bootstrap(origin);
+            expect(cleartext.connection).toEqual({ ok: false, error: expect.stringContaining("must use HTTPS") });
+        }
+        const redirect = await bootstrap(redirectOrigin);
+        expect(redirect.connection).toEqual({ ok: false, error: expect.stringContaining("Network request failed") });
+        expect(externalRequests).toEqual(allowedRequests);
+        expect(observedRequests).not.toContain(downgradeUrl);
+        await request("vaults.close", { vaultId });
+        writeEvidence("wallet-service-policy-proof.json", { https, redirect, external_requests: externalRequests });
+    } finally {
+        const closed = worker.waitForEvent("close", { timeout: PHASE_TIMEOUT_MS });
+        await page.evaluate(() => (
+            window as typeof window & { webbaserProductionHarness: ProductionHarness }
+        ).webbaserProductionHarness.destroy());
+        await closed;
+    }
 });
 
 test("@smoke WebBaser production bridge loads local wheels and resolves an OOBI", async ({ page, baseURL }) => {

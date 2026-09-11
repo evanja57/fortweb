@@ -2,10 +2,11 @@ import { createHash } from 'node:crypto';
 
 export const PACKAGE_NAME = 'fortweb-runtime';
 export const PACKAGE_VERSION = '0.0.0';
+export const PACKAGE_SCHEMA_VERSION = '2.0.0';
 export const ZIP_BASENAME = 'fortweb-runtime-0.0.0.zip';
 export const ENTRYPOINT = 'app/index.html';
 export const REQUIREMENTS_PATH = 'contracts/runtime-requirements.json';
-export const REQUIREMENTS_SCHEMA = 'fort.runtime-requirements.v1';
+export const REQUIREMENTS_SCHEMA = 'fort.runtime-requirements.v2';
 
 function compareCodePoints(left, right) {
     const a = Array.from(left, (value) => value.codePointAt(0));
@@ -160,8 +161,7 @@ export function generateManifest({ files, provenance, fortwebCommitSha }) {
         payload_profile: 'offline-runtime',
         producer: 'fortweb',
         provenance,
-        runtime_origin: 'https://appassets.androidplatform.net',
-        schema_version: '1.0.0',
+        schema_version: PACKAGE_SCHEMA_VERSION,
     };
     validateManifest(manifest);
     return manifest;
@@ -171,7 +171,7 @@ export function validateManifest(manifest) {
     requireExactKeys(manifest, [
         'contracts', 'entrypoint', 'files', 'fortweb_commit_sha', 'package_name',
         'package_version', 'payload_profile', 'producer', 'provenance',
-        'runtime_origin', 'schema_version',
+        'schema_version',
     ], 'Manifest');
     const expected = {
         entrypoint: ENTRYPOINT,
@@ -179,8 +179,7 @@ export function validateManifest(manifest) {
         package_version: PACKAGE_VERSION,
         payload_profile: 'offline-runtime',
         producer: 'fortweb',
-        runtime_origin: 'https://appassets.androidplatform.net',
-        schema_version: '1.0.0',
+        schema_version: PACKAGE_SCHEMA_VERSION,
     };
     for (const [key, value] of Object.entries(expected)) {
         if (manifest[key] !== value) {

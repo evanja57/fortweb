@@ -34,8 +34,8 @@
         const runtimeOriginContract = {
             schema: "fortweb.runtime-origin.v1",
             version: query.has("invalidRuntimeContract") ? 2 : 1,
-            platform: "browser-dev",
-            mode: "browser-dev",
+            platform: query.has("walletServiceProduction") ? "android-webview" : "browser-dev",
+            mode: query.has("walletServiceProduction") ? "bundled-offline" : "browser-dev",
             documentOrigin: window.location.origin,
             appBaseUrl: window.location.origin,
             entryUrl: window.location.href,

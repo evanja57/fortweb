@@ -13,9 +13,20 @@ test('canonical JSON sorts object keys and retains array order', () => {
     assert.equal(canonicalJson({ z: 1, a: [{ y: 2, x: 1 }] }), '{"a":[{"x":1,"y":2}],"z":1}\n');
 });
 
-test('runtime requirements match the frozen consumer bytes', () => {
+test('frozen v2 requirements separate bundled runtime assets from HTTPS wallet data', () => {
     const value = serializeRuntimeRequirements();
-    assert.equal(Buffer.byteLength(value), 1581);
+    assert.equal(Buffer.byteLength(value), 1930);
+    const requirements = JSON.parse(value);
+    assert.equal(requirements.schema, 'fort.runtime-requirements.v2');
+    assert.equal(requirements.version, 2);
+    assert.equal(requirements.capabilities.bundled_assets_only.required, true);
+    assert.equal(requirements.capabilities.remote_runtime_acquisition_prohibition.required, true);
+    assert.equal(requirements.capabilities.wallet_service_https.required, true);
+    assert.equal(Object.hasOwn(requirements.capabilities, 'remote_network_prohibition'), false);
+    assert(requirements.forbidden_behaviors.includes('remote_runtime_acquisition'));
+    assert(requirements.forbidden_behaviors.includes('cleartext_wallet_service_traffic'));
+    assert.equal(requirements.forbidden_behaviors.includes('network_fetch'), false);
+    assert.equal(requirements.forbidden_behaviors.includes('localhost_or_loopback_origin'), false);
 });
 
 test('file rows require strict byte order and case-fold uniqueness', () => {

@@ -72,6 +72,7 @@ async def _ensure_packages():
         cesr_timeout_ms=15_000,
         reply_message_limit=16,
         reply_step_limit=4_096,
+        allow_local_http=True,
     )
     _RUNTIME_READY = True
 

@@ -348,6 +348,7 @@ def _parse_target(raw_target: str, mode: str) -> tuple[str, Asset | None] | None
     if parsed.path.endswith("/production.html") and parsed.query in {
         "invalidRuntimeContract=1",
         "preloadFailure=1",
+        "walletServiceProduction=1",
     }:
         return parsed.path, None
     if parsed.path in {"/oobi", OOBI_PATH}:

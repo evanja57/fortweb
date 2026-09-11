@@ -36,29 +36,38 @@ is published. CI pins its URL and both archive and manifest digests.
 
 ## Mobile consumer handoff
 
-The downstream handoff must refresh each consumer branch before it imports a
-package. The current validated source heads are:
+The following source snapshots record the earlier importer/schema handoff.
+They are historical evidence, not current mobile heads or acceptance of the
+revised producer contract. Refresh each consumer branch and inspect its
+importer before a new package handoff.
 
-| Consumer | Validated source | Import overlay | Acquisition change still required |
+| Consumer | Historical validated source | Recorded import overlay | Handoff checks |
 | --- | --- | --- | --- |
-| Fort iOS PR #34 | `095663cec33745714a3bf22f15a5d0a8d4608d3c` | Adds wrapper-owned root `index.html` | Replace its FortWeb checkout pin to donor commit `e079701a337468acb1484a1c2cf86acc517d8464` with an immutable final package identity. Make archive and export consume that same imported package. |
-| Fortoid PR #24 | `ac1e47fcd1d3f34cbb18482f205ac675b13fdad7` | None in the current importer | Replace `config/fortweb-runtime.json` pin to donor commit `e079701a337468acb1484a1c2cf86acc517d8464` with an immutable final package identity. Remove the active Pyodide `0.29.3`, CPython 3.13, and old wheel assumptions. |
+| Fort iOS PR #34 | `095663cec33745714a3bf22f15a5d0a8d4608d3c` | Adds wrapper-owned root `index.html` | Verify immutable package acquisition and ensure archive/export use the same imported package. |
+| Fortoid PR #24 | `ac1e47fcd1d3f34cbb18482f205ac675b13fdad7` | None | Verify immutable package acquisition and the Pyodide 314 runtime/ABI assumptions. |
 
 The package manifest contains the consumer snapshots that were frozen when the
 producer ran. A later live importer gate is a separate record and can use a
 newer consumer head. It does not rewrite or relabel the package manifest.
 
+Both consumers must adopt manifest/release schema `2.0.0` and runtime
+requirements `fort.runtime-requirements.v2`. The shared package has no fixed
+document origin. Its contract prohibits remote runtime acquisition and
+permits HTTPS wallet-service data. Each wrapper must enforce these rules and
+record its own origin and storage configuration.
+
 Fort iOS package-import checks do not prove its archive and export path. The
-archive and export targets still run source synchronization, and the separate
-slow Pyodide lane still carries its own old runtime assumptions. The consumer
+recorded snapshot used source synchronization in archive/export targets and
+older runtime assumptions in its separate Pyodide lane. Recheck these paths
+against the selected consumer head. The consumer
 must import the final package, apply `index.html`, recompute the complete
 post-overlay digest, build the final `.xcarchive`, verify the archived payload,
 and then export and verify the IPA.
 
-Fortoid still contains active `0.29.3` assumptions in its WebView runtime and
-tests, including old `/vendor/pyodide/0.29.3/` paths and CPython 3.13 wheel
-names. Its importer can accept the new schema while the application runtime is
-still stale. The consumer must update those assumptions, import the final
+The recorded Fortoid snapshot contained `0.29.3` assumptions in its WebView
+runtime and tests, including old `/vendor/pyodide/0.29.3/` paths and CPython
+3.13 wheel names. Importer acceptance alone does not prove that those runtime
+assumptions have been removed. The consumer must verify them, import the final
 package, recompute its complete post-overlay digest, and prove the final APK
 and AAB.
 

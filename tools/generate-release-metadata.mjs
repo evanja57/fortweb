@@ -1,4 +1,4 @@
-import { canonicalJson, ZIP_BASENAME } from './runtime-package-manifest.mjs';
+import { canonicalJson, PACKAGE_SCHEMA_VERSION, ZIP_BASENAME } from './runtime-package-manifest.mjs';
 
 export function generateReleaseMetadata({ artifactSha256, artifactBytes, fortwebCommitSha, ref }) {
     if (typeof fortwebCommitSha !== 'string' || !/^[0-9a-f]{40}$/.test(fortwebCommitSha)) {
@@ -28,8 +28,7 @@ export function generateReleaseMetadata({ artifactSha256, artifactBytes, fortweb
         ref,
         ref_name: refName,
         repository: 'keri-foundation/fortweb',
-        runtime_origin: 'https://appassets.androidplatform.net',
-        schema_version: '1.0.0',
+        schema_version: PACKAGE_SCHEMA_VERSION,
         workflow: '.github/workflows/fortweb-runtime-package.yml',
         workflow_identity: 'unpublished-local-build',
     };

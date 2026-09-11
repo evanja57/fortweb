@@ -349,6 +349,7 @@ transporting.configure_runtime(
     cesr_timeout_ms=KF_CESR_TIMEOUT_MS,
     reply_message_limit=KF_CESR_REPLY_MESSAGE_LIMIT,
     reply_step_limit=KF_CESR_REPLY_STEP_LIMIT,
+    allow_local_http=_config_dict().get("fort_wallet_service_http_local_dev") is True,
 )
 onboarding.configure_runtime(
     kf_state_key=KF_STATE_KEY,

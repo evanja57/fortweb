@@ -16,6 +16,8 @@ test('release metadata is canonical and explicitly unpublished', () => {
     assert.equal(release.attestation.present, false);
     assert.equal(release.attestation.verified, false);
     assert.equal(release.workflow_identity, 'unpublished-local-build');
+    assert.equal(release.schema_version, '2.0.0');
+    assert.equal(Object.hasOwn(release, 'runtime_origin'), false);
     assert.equal(release.commit_sha, values.fortwebCommitSha);
     assert.equal(release.ref_name, 'pyodide-314-runtime');
     assert.match(release.attestation.verify_command, /github\\\.com/);

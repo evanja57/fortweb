@@ -92,11 +92,13 @@ jobs:
             tools/runtime-package-base.test.mjs \
             tools/runtime-package-manifest.test.mjs \
             tools/runtime-package-release.test.mjs \
+            tools/runtime-origin-local-dev.test.mjs \
             tools/verify-runtime-package.test.mjs
           python3 -m unittest \
             python/test_acquire_runtime_source.py \
             python/test_build_runtime_source.py \
             python/test_serve_local.py \
+            python/test_serve_runtime_browser.py \
             python/test_transporting.py \
             python/test_onboarding.py \
             python/test_vaulting.py
@@ -119,10 +121,11 @@ jobs:
       - name: Test runtime JS check
         run: npm run test:runtime-js-check
 
-      - name: Package and verify runtime
+      - name: Prove runtime and package determinism, then package the tested runtime
         env:
           PACKAGE_REF: ${{ github.head_ref && format('refs/heads/{0}', github.head_ref) || github.ref }}
         run: |
+          npm run test:build-idempotency
           npm run package:runtime -- \
             --runtime-dir dist/runtime \
             --python python3 \

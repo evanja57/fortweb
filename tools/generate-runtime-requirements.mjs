@@ -26,8 +26,8 @@ export const RUNTIME_REQUIREMENTS = {
             description: 'IndexedDB must persist across launches within a stable storage partition.',
             required: true,
         },
-        remote_network_prohibition: {
-            description: 'General network access must be prohibited. Only bundled assets may be loaded.',
+        remote_runtime_acquisition_prohibition: {
+            description: 'HTML, JavaScript, workers, Python, WASM, wheels, and other runtime assets must load only from the verified bundle. Remote acquisition and CDN fallback are prohibited.',
             required: true,
         },
         secure_context: {
@@ -38,27 +38,31 @@ export const RUNTIME_REQUIREMENTS = {
             description: 'The document origin must be stable across app launches.',
             required: true,
         },
+        wallet_service_https: {
+            description: 'HTTPS wallet-service data requests must be allowed for KF boot, witnesses, watchers, account operations, and OOBIs. Responses must not be loaded or executed as runtime code.',
+            required: true,
+        },
         worker_availability: {
             description: 'Web Workers must be available for the Pyodide runtime.',
             required: true,
         },
     },
     forbidden_behaviors: [
-        'network_fetch',
+        'remote_runtime_acquisition',
+        'cleartext_wallet_service_traffic',
         'service_worker_registration',
         'general_purpose_browsing',
-        'localhost_or_loopback_origin',
         'http_fallback',
     ],
     payload_profile: 'offline-runtime',
     producer: 'fortweb',
     schema: REQUIREMENTS_SCHEMA,
-    version: 1,
+    version: 2,
 };
 
 export function serializeRuntimeRequirements() {
     const text = canonicalJson(RUNTIME_REQUIREMENTS);
-    if (Buffer.byteLength(text) !== 1581 || sha256(text) !== '990bfa32719dac5eaa6bdfc2bf17de29df92720c1e47917fcfd083bbf3202781') {
+    if (Buffer.byteLength(text) !== 1930 || sha256(text) !== 'ae31c57077fb24744eda3e01d53350bd9dadf9d0b8b6647d5252f837854ffdcc') {
         throw new Error('Runtime requirements bytes do not match the frozen consumer contract.');
     }
     return text;

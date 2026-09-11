@@ -5,7 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { createDeterministicZip } from './deterministic-zip.mjs';
-import { serializeReleaseMetadata } from './generate-release-metadata.mjs';
+import { generateReleaseMetadata } from './generate-release-metadata.mjs';
 import { serializeRuntimeRequirements } from './generate-runtime-requirements.mjs';
 import {
     canonicalJson,
@@ -103,23 +103,25 @@ async function writeNew(filename, data) {
     try { await handle.writeFile(data); } finally { await handle.close(); }
 }
 
-async function fixture(root) {
+async function fixture(root, { requirements = serializeRuntimeRequirements(), manifestOverrides = {}, releaseOverrides = {} } = {}) {
     const content = new Map([['app/index.html', Buffer.from('app')]]);
     for (let index = 0; index < 3; index += 1) {
         content.set(`payload/${String(index).padStart(3, '0')}.bin`, Buffer.from([index]));
     }
-    const requirements = Buffer.from(serializeRuntimeRequirements());
-    content.set(REQUIREMENTS_PATH, requirements);
+    content.set(REQUIREMENTS_PATH, Buffer.from(requirements));
     const rows = [...content].map(([memberPath, data]) => ({
         bytes: data.length, path: memberPath, sha256: sha256(data),
     })).sort((a, b) => Buffer.compare(Buffer.from(a.path), Buffer.from(b.path)));
     const packageProvenance = provenance();
     const fortwebCommitSha = packageProvenance.source.fortweb_commit_sha;
-    const manifest = Buffer.from(canonicalJson(generateManifest({
+    const manifestValue = generateManifest({
         files: rows,
         provenance: packageProvenance,
         fortwebCommitSha,
-    })));
+    });
+    assert.equal(manifestValue.schema_version, '2.0.0');
+    assert.equal(Object.hasOwn(manifestValue, 'runtime_origin'), false);
+    const manifest = Buffer.from(canonicalJson({ ...manifestValue, ...manifestOverrides }));
     const checksum = Buffer.from(`${sha256(manifest)}  manifest.json\n`);
     const zip = createDeterministicZip([
         ...[...content].map(([memberPath, data]) => ({ name: `fortweb-runtime/${memberPath}`, data })),
@@ -129,12 +131,12 @@ async function fixture(root) {
     const zipDigest = sha256(zip);
     await writeNew(path.join(root, ZIP_BASENAME), zip);
     await writeNew(path.join(root, `${ZIP_BASENAME}.sha256`), Buffer.from(`${zipDigest}  ${ZIP_BASENAME}\n`));
-    await writeNew(path.join(root, 'fortweb-release.json'), Buffer.from(serializeReleaseMetadata({
+    await writeNew(path.join(root, 'fortweb-release.json'), Buffer.from(canonicalJson({ ...generateReleaseMetadata({
         artifactSha256: zipDigest,
         artifactBytes: zip.length,
         fortwebCommitSha,
         ref: 'refs/heads/pyodide-314-runtime',
-    })));
+    }), ...releaseOverrides })));
 }
 
 test('portable verifier accepts the canonical generic product and rejects a bad sidecar', async () => {
@@ -148,6 +150,29 @@ test('portable verifier accepts the canonical generic product and rejects a bad 
         await assert.rejects(verifyProduct(root), /sidecar/);
     } finally {
         await rm(root, { recursive: true, force: true });
+    }
+});
+
+test('portable verifier rejects incompatible contracts even with matching package checksums', async () => {
+    const v1 = { ...JSON.parse(serializeRuntimeRequirements()), schema: 'fort.runtime-requirements.v1', version: 1 };
+    const contradictory = JSON.parse(serializeRuntimeRequirements());
+    contradictory.forbidden_behaviors.push('network_fetch');
+    const cases = [
+        [{ requirements: canonicalJson(v1) }, /Runtime requirements mismatch/],
+        [{ requirements: canonicalJson(contradictory) }, /Runtime requirements mismatch/],
+        [{ manifestOverrides: { schema_version: '1.0.0' } }, /Manifest schema_version/],
+        [{ manifestOverrides: { runtime_origin: 'https://appassets.androidplatform.net' } }, /Manifest has an unexpected key set/],
+        [{ releaseOverrides: { schema_version: '1.0.0' } }, /Release metadata mismatch/],
+        [{ releaseOverrides: { runtime_origin: 'https://appassets.androidplatform.net' } }, /Release metadata mismatch/],
+    ];
+    for (const [overrides, expected] of cases) {
+        const root = await mkdtemp(path.join(os.tmpdir(), 'fortweb-runtime-contract.'));
+        try {
+            await fixture(root, overrides);
+            await assert.rejects(verifyProduct(root), expected);
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
     }
 });
 

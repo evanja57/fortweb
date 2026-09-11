@@ -117,6 +117,7 @@ class RuntimeBrowserServerTest(unittest.TestCase):
                 "/_runtime-test/ci/fixtures/webbaser-lifecycle/index.html",
                 "/_runtime-test/ci/fixtures/webbaser-lifecycle/production.html?invalidRuntimeContract=1",
                 "/_runtime-test/ci/fixtures/webbaser-lifecycle/production.html?preloadFailure=1",
+                "/_runtime-test/ci/fixtures/webbaser-lifecycle/production.html?walletServiceProduction=1",
                 "/_runtime-test/python/run_webbaser_lifecycle.py",
                 "/fortweb/pyscript-preload-failure.toml",
                 "/oobi?name=blind-test",

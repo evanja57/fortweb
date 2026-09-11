@@ -28,6 +28,7 @@ def configure_runtime(
     cesr_timeout_ms: int,
     reply_message_limit: int,
     reply_step_limit: int,
+    allow_local_http: bool = False,
 ):
     _CONFIG.clear()
     _CONFIG.update(
@@ -38,6 +39,7 @@ def configure_runtime(
         cesr_timeout_ms=cesr_timeout_ms,
         reply_message_limit=reply_message_limit,
         reply_step_limit=reply_step_limit,
+        allow_local_http=allow_local_http is True,
     )
 
 
@@ -139,8 +141,27 @@ def kf_surface_destination(surfaces: KfSurfaceConfig, *, surface_name: str, boot
     return surfaces.onboarding_destination or boot_server_aid
 
 
+def _validate_service_url(url: str):
+    try:
+        if not isinstance(url, str) or "\\" in url or any(ord(char) <= 32 or ord(char) == 127 for char in url):
+            raise ValueError("Invalid URL characters")
+        parsed = urlparse(url)
+        if not parsed.hostname or parsed.username is not None or parsed.password is not None:
+            raise ValueError("Invalid URL authority")
+        # Accessing port also rejects malformed or out-of-range ports.
+        parsed.port
+        if parsed.scheme == "https":
+            return
+        if (parsed.scheme == "http" and _CONFIG.get("allow_local_http", False)
+                and parsed.hostname in {"127.0.0.1", "localhost", "::1"}):
+            return
+    except ValueError:
+        pass
+    raise vaulting.RuntimeFault("VALIDATION", "Wallet-service URL must use HTTPS; local HTTP requires browser development mode.")
+
+
 def proxy_url(url: str):
-    if not url:
+    if not url or not _CONFIG.get("allow_local_http", False):
         return url
 
     parsed = urlparse(url)
@@ -275,6 +296,7 @@ async def fetch_response(
     body=None,
     timeout_ms: int | None = None,
 ):
+    _validate_service_url(url)
     timeout_handle = None
     timeout_ms = int(timeout_ms or _CONFIG["bootstrap_timeout_ms"])
     try:
@@ -285,6 +307,8 @@ async def fetch_response(
         options = js.Object.new()
         options.method = method
         options.headers = request_headers
+        # Reject redirects before a request can leave the declared HTTPS endpoint.
+        options.redirect = "error"
         if body is not None:
             options.body = body
         if hasattr(js, "AbortController"):

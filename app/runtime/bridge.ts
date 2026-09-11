@@ -5,6 +5,7 @@ import { postLog, postLifecycle } from "./logger.js";
 import { fetchRuntimeConfig } from "./runtime-config.js";
 import {
     describeRuntimeOriginContract,
+    isLocalWalletServiceHttpAllowed,
     type FortRuntimeOriginContractV1,
 } from "./origin-contract.js";
 
@@ -214,6 +215,9 @@ export function createRuntimeBridge({ workerUrl, configUrl, runtimeOriginContrac
                     throw new Error(`Runtime config ${configUrlString} does not specify fort_runtime_packages.`);
                 }
                 (packageConfig as Record<string, unknown>).package_base = packageBase;
+                config.fort_wallet_service_http_local_dev = isLocalWalletServiceHttpAllowed(
+                    window.location, runtimeOriginContract ?? null,
+                );
                 if (runtimeOriginContract) {
                     config.fort_runtime_origin = runtimeOriginContract;
                     postLog("runtime_origin_contract_forwarded", describeRuntimeOriginContract(runtimeOriginContract));
