@@ -1,4 +1,4 @@
-"""Test the vault-independent settings boundary."""
+"""Test vault lifecycle, settings, and identifier boundaries."""
 
 from __future__ import annotations
 
@@ -133,6 +133,120 @@ class IdentifierNamespaceTest(unittest.TestCase):
             vaulting._get_identifier_record(hby, "internal")
         self.assertEqual(raised.exception.code, "NOT_FOUND")
         self.assertIs(hby.habByPre("internal"), internal)
+
+
+class VaultSetupTest(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.vaulting = _load_module()
+
+        class Store:
+            SubDbNames = []
+
+            def __init__(self):
+                self.opened = False
+                self.records = {"saved": "vault data"}
+                self.open_error = None
+                self.close_error = None
+
+            async def reopen(self, **_kwargs):
+                self.opened = True
+                if self.open_error is not None:
+                    raise self.open_error
+
+            async def aclose(self, *, clear=False):
+                if self.close_error is not None:
+                    raise self.close_error
+                if clear:
+                    self.records.clear()
+                self.opened = False
+
+        self.keeper = Store()
+        self.baser = Store()
+        self.cf = self.vaulting.NullConfiger()
+        self.vaulting.NullConfiger = lambda: self.cf
+        self.setup_error = None
+
+        def habery(**kwargs):
+            if self.setup_error is not None:
+                raise self.setup_error
+            return SimpleNamespace(**kwargs)
+
+        async def ensure_runtime_packages():
+            pass
+
+        modules = {
+            "webkeeping": SimpleNamespace(WebKeeper=lambda **_kwargs: self.keeper),
+            "webbasing": SimpleNamespace(WebBaser=lambda **_kwargs: self.baser),
+            "habbing": SimpleNamespace(Habery=habery),
+        }
+        self.vaulting._CONFIG.update(
+            ensure_runtime_packages=ensure_runtime_packages,
+            load_modules=lambda: modules,
+            storage_opener=None,
+            kf_state_subdb="kfst.",
+        )
+        self.record = {"id": "vault-test", "storageName": "test", "rootSalt": "salt"}
+
+    async def test_setup_keeps_stores_open_for_the_returned_habery(self):
+        state = await self.vaulting._build_vault_state(self.record)
+        self.assertIs(state["hby"].ks, self.keeper)
+        self.assertIs(state["hby"].db, self.baser)
+        self.assertTrue(self.keeper.opened)
+        self.assertTrue(self.baser.opened)
+        self.assertTrue(self.cf.opened)
+
+    async def test_open_and_setup_failures_close_stores_without_clearing(self):
+        for stage in ("keeper", "baser", "habery"):
+            with self.subTest(stage=stage):
+                self.setUp()
+                error = ValueError("vault setup failed")
+                if stage == "habery":
+                    self.setup_error = error
+                else:
+                    getattr(self, stage).open_error = error
+                with self.assertRaises(ValueError) as raised:
+                    await self.vaulting._build_vault_state(self.record)
+                self.assertIs(raised.exception, error)
+                self.assertFalse(self.keeper.opened)
+                self.assertFalse(self.baser.opened)
+                self.assertFalse(self.cf.opened)
+                for store in (self.keeper, self.baser):
+                    self.assertEqual(store.records, {"saved": "vault data"})
+
+    async def test_close_failure_preserves_setup_error_and_closes_other_store(self):
+        for failed, other in (("baser", "keeper"), ("keeper", "baser")):
+            for failure_type in (RuntimeError, asyncio.CancelledError):
+                with self.subTest(store=failed, failure=failure_type):
+                    self.setUp()
+                    self.setup_error = ValueError("authentication failed")
+                    getattr(self, failed).close_error = failure_type("close failed")
+                    with self.assertRaises(ValueError) as raised:
+                        await self.vaulting._build_vault_state(self.record)
+                    self.assertIs(raised.exception, self.setup_error)
+                    self.assertFalse(getattr(self, other).opened)
+                    self.assertFalse(self.cf.opened)
+                    self.assertEqual(len(raised.exception.__notes__), 1)
+                    for store in (self.keeper, self.baser):
+                        self.assertEqual(store.records, {"saved": "vault data"})
+
+    async def test_cancelled_open_closes_stores(self):
+        started = asyncio.Event()
+        pending = asyncio.Event()
+
+        async def reopen(**_kwargs):
+            self.baser.opened = True
+            started.set()
+            await pending.wait()
+
+        self.baser.reopen = reopen
+        task = asyncio.create_task(self.vaulting._build_vault_state(self.record))
+        await started.wait()
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        self.assertFalse(self.keeper.opened)
+        self.assertFalse(self.baser.opened)
+        self.assertFalse(self.cf.opened)
 
 
 if __name__ == "__main__":

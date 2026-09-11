@@ -315,22 +315,26 @@ async def _build_vault_state(record, *, bran: str = ""):
     kf_state_subdb = _CONFIG["kf_state_subdb"]
     if kf_state_subdb not in baser.SubDbNames:
         baser.SubDbNames = [*baser.SubDbNames, kf_state_subdb]
-    await keeper.reopen(storageOpener=_CONFIG["storage_opener"])
-    await baser.reopen(storageOpener=_CONFIG["storage_opener"])
-
+    cf = NullConfiger()
     try:
+        await keeper.reopen(storageOpener=_CONFIG["storage_opener"])
+        await baser.reopen(storageOpener=_CONFIG["storage_opener"])
         hby = modules["habbing"].Habery(
             name=record["storageName"],
             ks=keeper,
             db=baser,
-            cf=NullConfiger(),
+            cf=cf,
             temp=False,
             salt=record["rootSalt"],
             bran=bran or None,
         )
-    except Exception:
-        await baser.aclose(clear=False)
-        await keeper.aclose(clear=False)
+    except BaseException as error:
+        for store in (baser, keeper):
+            try:
+                await store.aclose(clear=False)
+            except BaseException as close_error:
+                error.add_note(f"{type(store).__name__} cleanup failed: {close_error!r}")
+        cf.close()
         raise
 
     return {
