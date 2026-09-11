@@ -31,7 +31,8 @@ WHEELHOUSE_ROOT = Path(os.environ["FORTWEB_WHEELHOUSE_ROOT"]) if os.environ.get(
 
 @contextlib.contextmanager
 def running_server(mode: str):
-    with tempfile.TemporaryDirectory(dir="/private/tmp") as directory:
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory).resolve()
         inventory_path = None
         if mode != "wheelhouse":
             rows = []
@@ -44,7 +45,7 @@ def running_server(mode: str):
                 digest = hashlib.sha256(body).hexdigest()
                 rows.append({"path": relative, "bytes": len(body), "sha256": digest})
                 aggregate.update(f"{relative}\0{len(body)}\0{digest}\n".encode())
-            inventory_path = Path(directory) / "inventory.json"
+            inventory_path = root / "inventory.json"
             inventory_path.write_text(
                 json.dumps({"schema": 1, "files": rows, "aggregate_sha256": aggregate.hexdigest()}),
                 encoding="utf-8",
@@ -159,8 +160,9 @@ class RuntimeBrowserServerTest(unittest.TestCase):
                 self.assertEqual(request(port, "/fortweb/app/index.html", method=method)[0], 405)
 
     def test_ready_file_is_written_atomically(self):
-        with tempfile.TemporaryDirectory(dir="/private/tmp") as directory:
-            target = Path(directory) / "ready.json"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            target = root / "ready.json"
             self.assertFalse(target.exists())
             payload = {"url": "http://127.0.0.1:1"}
             original_write = os.write
@@ -191,7 +193,7 @@ class RuntimeBrowserServerTest(unittest.TestCase):
                 digest = hashlib.sha256(body).hexdigest()
                 rows.append({"path": relative, "bytes": len(body), "sha256": digest})
                 aggregate.update(f"{relative}\0{len(body)}\0{digest}\n".encode())
-            inventory = Path(directory) / "inventory.json"
+            inventory = root / "inventory.json"
             inventory.write_text(
                 json.dumps(
                     {
@@ -201,7 +203,7 @@ class RuntimeBrowserServerTest(unittest.TestCase):
                     }
                 )
             )
-            subprocess_ready = Path(directory) / "subprocess-ready.json"
+            subprocess_ready = root / "subprocess-ready.json"
             process = subprocess.Popen(
                 [
                     sys.executable,
@@ -237,8 +239,8 @@ class RuntimeBrowserServerTest(unittest.TestCase):
                     process.wait(timeout=10)
 
     def test_rejects_symlinked_root_ancestor(self):
-        with tempfile.TemporaryDirectory(dir="/private/tmp") as directory:
-            parent = Path(directory)
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory).resolve()
             real_root = parent / "real"
             real_root.mkdir()
             (real_root / "input.txt").write_text("trusted", encoding="utf-8")
